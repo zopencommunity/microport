@@ -1,0 +1,6283 @@
+diff --git i/attr.go w/attr.go
+index 8b1eab7..05af5e5 100644
+--- i/attr.go
++++ w/attr.go
+@@ -1,4 +1,4 @@
+-// Copyright 2020 The TCell Authors
++// Copyright 2024 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -16,18 +16,19 @@ package tcell
+ 
+ // AttrMask represents a mask of text attributes, apart from color.
+ // Note that support for attributes may vary widely across terminals.
+-type AttrMask int
++type AttrMask uint
+ 
+ // Attributes are not colors, but affect the display of text.  They can
+-// be combined.
++// be combined, in some cases, but not others. (E.g. you can have Dim Italic,
++// but only CurlyUnderline cannot be mixed with DottedUnderline.)
+ const (
+ 	AttrBold AttrMask = 1 << iota
+ 	AttrBlink
+ 	AttrReverse
+-	AttrUnderline
++	AttrUnderline // Deprecated: Use UnderlineStyle
+ 	AttrDim
+ 	AttrItalic
+ 	AttrStrikeThrough
+-	AttrInvalid              // Mark the style or attributes invalid
+-	AttrNone    AttrMask = 0 // Just normal text.
++	AttrInvalid AttrMask = 1 << 31 // Mark the style or attributes invalid
++	AttrNone    AttrMask = 0       // Just normal text.
+ )
+diff --git i/cell.go w/cell.go
+index c7f8f1a..c139fbd 100644
+--- i/cell.go
++++ w/cell.go
+@@ -1,4 +1,4 @@
+-// Copyright 2019 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -15,20 +15,31 @@
+ package tcell
+ 
+ import (
+-	runewidth "github.com/mattn/go-runewidth"
++	"github.com/rivo/uniseg"
+ )
+ 
+ type cell struct {
+-	currMain  rune
+-	currComb  []rune
++	currStr   string
++	lastStr   string
+ 	currStyle Style
+-	lastMain  rune
+ 	lastStyle Style
+-	lastComb  []rune
+ 	width     int
++	lock      bool
+ }
+ 
+-// CellBuffer represents a two dimensional array of character cells.
++func (c *cell) setDirty(dirty bool) {
++	if dirty {
++		c.lastStr = ""
++	} else {
++		if c.currStr == "" {
++			c.currStr = " "
++		}
++		c.lastStr = c.currStr
++		c.lastStyle = c.currStyle
++	}
++}
++
++// CellBuffer represents a two-dimensional array of character cells.
+ // This is primarily intended for use by Screen implementors; it
+ // contains much of the common code they need.  To create one, just
+ // declare a variable of its type; no explicit initialization is necessary.
+@@ -41,38 +52,97 @@ type CellBuffer struct {
+ }
+ 
+ // SetContent sets the contents (primary rune, combining runes,
+-// and style) for a cell at a given location.
+-func (cb *CellBuffer) SetContent(x int, y int,
+-	mainc rune, combc []rune, style Style) {
++// and style) for a cell at a given location.  If the background or
++// foreground of the style is set to ColorNone, then the respective
++// color is left un changed.
++//
++// Deprecated: Use Put instead, which this is implemented in terms of.
++func (cb *CellBuffer) SetContent(x int, y int, mainc rune, combc []rune, style Style) {
++	cb.Put(x, y, string(append([]rune{mainc}, combc...)), style)
++}
+ 
++// Put a single styled grapheme using the given string and style
++// at the same location.  Note that only the first grapheme in the string
++// will bre displayed, using only the 1 or 2 (depending on width) cells
++// located at x, y. It returns the rest of the string, and the width used.
++func (cb *CellBuffer) Put(x int, y int, str string, style Style) (string, int) {
++	var width int = 0
+ 	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
++		var cl string
+ 		c := &cb.cells[(y*cb.w)+x]
+-
+-		c.currComb = append([]rune{}, combc...)
+-
+-		if c.currMain != mainc {
+-			c.width = runewidth.RuneWidth(mainc)
++		state := -1
++		for width == 0 && str != "" {
++			var g string
++			g, str, width, state = uniseg.FirstGraphemeClusterInString(str, state)
++			cl += g
++			if g == "" {
++				break
++			}
++		}
++
++		// Wide characters: we want to mark the "wide" cells
++		// dirty as well as the base cell, to make sure we consider
++		// both cells as dirty together.  We only need to do this
++		// if we're changing content
++		if width > 0 && cl != c.currStr {
++			// Prevent unnecessary boundchecks for first cell, since we already
++			// received that one.
++			c.setDirty(true)
++			for i := 1; i < width; i++ {
++				cb.SetDirty(x+i, y, true)
++			}
++		}
++
++		c.currStr = cl
++		c.width = width
++
++		if style.fg == ColorNone {
++			style.fg = c.currStyle.fg
++		}
++		if style.bg == ColorNone {
++			style.bg = c.currStyle.bg
+ 		}
+-		c.currMain = mainc
+ 		c.currStyle = style
+ 	}
++	return str, width
++}
++
++// Get the contents of a character cell (or two adjacent cells), including the
++// the style and the display width in cells.  (The width can be either 1, normally,
++// or 2 for East Asian full-width characters.  If the width is 0, then the cell is
++// is empty.)
++func (cb *CellBuffer) Get(x, y int) (string, Style, int) {
++	var style Style
++	var width int
++	var str string
++	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
++		c := &cb.cells[(y*cb.w)+x]
++		str, style = c.currStr, c.currStyle
++		if width = c.width; width == 0 || str == "" {
++			width = 1
++			str = " "
++		}
++	}
++	return str, style, width
+ }
+ 
+ // GetContent returns the contents of a character cell, including the
+ // primary rune, any combining character runes (which will usually be
+ // nil), the style, and the display width in cells.  (The width can be
+ // either 1, normally, or 2 for East Asian full-width characters.)
++//
++// Deprecated: Use Get, which this implemented in terms of.
+ func (cb *CellBuffer) GetContent(x, y int) (rune, []rune, Style, int) {
+-	var mainc rune
+-	var combc []rune
+ 	var style Style
+ 	var width int
+-	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
+-		c := &cb.cells[(y*cb.w)+x]
+-		mainc, combc, style = c.currMain, c.currComb, c.currStyle
+-		if width = c.width; width == 0 || mainc < ' ' {
+-			width = 1
+-			mainc = ' '
++	var mainc rune
++	var combc []rune
++	str, style, width := cb.Get(x, y)
++	for i, r := range str {
++		if i == 0 {
++			mainc = r
++		} else {
++			combc = append(combc, r)
+ 		}
+ 	}
+ 	return mainc, combc, style, width
+@@ -86,34 +156,25 @@ func (cb *CellBuffer) Size() (int, int) {
+ // Invalidate marks all characters within the buffer as dirty.
+ func (cb *CellBuffer) Invalidate() {
+ 	for i := range cb.cells {
+-		cb.cells[i].lastMain = rune(0)
++		cb.cells[i].lastStr = ""
+ 	}
+ }
+ 
+-// Dirty checks if a character at the given location needs an
+-// to be refreshed on the physical display.  This returns true
+-// if the cell content is different since the last time it was
+-// marked clean.
++// Dirty checks if a character at the given location needs to be
++// refreshed on the physical display.  This returns true if the cell
++// content is different since the last time it was marked clean.
+ func (cb *CellBuffer) Dirty(x, y int) bool {
+ 	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
+ 		c := &cb.cells[(y*cb.w)+x]
+-		if c.lastMain == rune(0) {
+-			return true
+-		}
+-		if c.lastMain != c.currMain {
+-			return true
++		if c.lock {
++			return false
+ 		}
+ 		if c.lastStyle != c.currStyle {
+ 			return true
+ 		}
+-		if len(c.lastComb) != len(c.currComb) {
++		if c.lastStr != c.currStr {
+ 			return true
+ 		}
+-		for i := range c.lastComb {
+-			if c.lastComb[i] != c.currComb[i] {
+-				return true
+-			}
+-		}
+ 	}
+ 	return false
+ }
+@@ -124,24 +185,43 @@ func (cb *CellBuffer) Dirty(x, y int) bool {
+ func (cb *CellBuffer) SetDirty(x, y int, dirty bool) {
+ 	if x >= 0 && y >= 0 && x < cb.w && y < cb.h {
+ 		c := &cb.cells[(y*cb.w)+x]
+-		if dirty {
+-			c.lastMain = rune(0)
+-		} else {
+-			if c.currMain == rune(0) {
+-				c.currMain = ' '
+-			}
+-			c.lastMain = c.currMain
+-			c.lastComb = c.currComb
+-			c.lastStyle = c.currStyle
+-		}
++		c.setDirty(dirty)
+ 	}
+ }
+ 
++// LockCell locks a cell from being drawn, effectively marking it "clean" until
++// the lock is removed. This can be used to prevent tcell from drawing a given
++// cell, even if the underlying content has changed. For example, when drawing a
++// sixel graphic directly to a TTY screen an implementer must lock the region
++// underneath the graphic to prevent tcell from drawing on top of the graphic.
++func (cb *CellBuffer) LockCell(x, y int) {
++	if x < 0 || y < 0 {
++		return
++	}
++	if x >= cb.w || y >= cb.h {
++		return
++	}
++	c := &cb.cells[(y*cb.w)+x]
++	c.lock = true
++}
++
++// UnlockCell removes a lock from the cell and marks it as dirty
++func (cb *CellBuffer) UnlockCell(x, y int) {
++	if x < 0 || y < 0 {
++		return
++	}
++	if x >= cb.w || y >= cb.h {
++		return
++	}
++	c := &cb.cells[(y*cb.w)+x]
++	c.lock = false
++	cb.SetDirty(x, y, true)
++}
++
+ // Resize is used to resize the cells array, with different dimensions,
+ // while preserving the original contents.  The cells will be invalidated
+ // so that they can be redrawn.
+ func (cb *CellBuffer) Resize(w, h int) {
+-
+ 	if cb.h == h && cb.w == w {
+ 		return
+ 	}
+@@ -151,11 +231,10 @@ func (cb *CellBuffer) Resize(w, h int) {
+ 		for x := 0; x < w && x < cb.w; x++ {
+ 			oc := &cb.cells[(y*cb.w)+x]
+ 			nc := &newc[(y*w)+x]
+-			nc.currMain = oc.currMain
+-			nc.currComb = oc.currComb
++			nc.currStr = oc.currStr
+ 			nc.currStyle = oc.currStyle
+ 			nc.width = oc.width
+-			nc.lastMain = rune(0)
++			nc.lastStr = ""
+ 		}
+ 	}
+ 	cb.cells = newc
+@@ -166,12 +245,20 @@ func (cb *CellBuffer) Resize(w, h int) {
+ // Fill fills the entire cell buffer array with the specified character
+ // and style.  Normally choose ' ' to clear the screen.  This API doesn't
+ // support combining characters, or characters with a width larger than one.
++// If either the foreground or background are ColorNone, then the respective
++// color is unchanged.
+ func (cb *CellBuffer) Fill(r rune, style Style) {
+ 	for i := range cb.cells {
+ 		c := &cb.cells[i]
+-		c.currMain = r
+-		c.currComb = nil
+-		c.currStyle = style
++		c.currStr = string(r)
++		cs := style
++		if cs.fg == ColorNone {
++			cs.fg = c.currStyle.fg
++		}
++		if cs.bg == ColorNone {
++			cs.bg = c.currStyle.bg
++		}
++		c.currStyle = cs
+ 		c.width = 1
+ 	}
+ }
+diff --git i/charset_stub.go w/charset_stub.go
+index c1c1594..829be2c 100644
+--- i/charset_stub.go
++++ w/charset_stub.go
+@@ -1,4 +1,5 @@
+-// +build plan9 nacl
++//go:build nacl
++// +build nacl
+ 
+ // Copyright 2015 The TCell Authors
+ //
+diff --git i/charset_unix.go w/charset_unix.go
+index 2f07005..8bbf1f5 100644
+--- i/charset_unix.go
++++ w/charset_unix.go
+@@ -38,7 +38,7 @@ func getCharset() string {
+ 	if i := strings.IndexRune(locale, '@'); i >= 0 {
+ 		locale = locale[:i]
+ 	}
+-	if i := strings.LastIndexByte(locale, '.'); i >= 0 {
++	if i := strings.IndexRune(locale, '.'); i >= 0 {
+ 		locale = locale[i+1:]
+ 	} else {
+ 		// Default assumption, and on Linux we can see LC_ALL
+diff --git i/charset_windows.go w/charset_windows.go
+index 2400aa8..68e4982 100644
+--- i/charset_windows.go
++++ w/charset_windows.go
+@@ -1,3 +1,4 @@
++//go:build windows
+ // +build windows
+ 
+ // Copyright 2015 The TCell Authors
+@@ -17,5 +18,5 @@
+ package tcell
+ 
+ func getCharset() string {
+-	return "UTF-16"
++	return "UTF-8"
+ }
+diff --git i/color.go w/color.go
+index 8a13a07..904848e 100644
+--- i/color.go
++++ w/color.go
+@@ -1,4 +1,4 @@
+-// Copyright 2020 The TCell Authors
++// Copyright 2023 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -14,7 +14,11 @@
+ 
+ package tcell
+ 
+-import "strconv"
++import (
++	"fmt"
++	ic "image/color"
++	"strconv"
++)
+ 
+ // Color represents a color.  The low numeric values are the same as used
+ // by ECMA-48, and beyond that XTerm.  A 24-bit RGB value may be used by
+@@ -35,7 +39,7 @@ const (
+ 	// system or terminal default may exist.  It's also the zero value.
+ 	ColorDefault Color = 0
+ 
+-	// ColorIsValid is used to indicate the color value is actually
++	// ColorValid is used to indicate the color value is actually
+ 	// valid (initialized).  This is useful to permit the zero value
+ 	// to be treated as the default.
+ 	ColorValid Color = 1 << 32
+@@ -310,129 +314,129 @@ const (
+ 	Color253
+ 	Color254
+ 	Color255
+-	ColorAliceBlue
+-	ColorAntiqueWhite
+-	ColorAquaMarine
+-	ColorAzure
+-	ColorBeige
+-	ColorBisque
+-	ColorBlanchedAlmond
+-	ColorBlueViolet
+-	ColorBrown
+-	ColorBurlyWood
+-	ColorCadetBlue
+-	ColorChartreuse
+-	ColorChocolate
+-	ColorCoral
+-	ColorCornflowerBlue
+-	ColorCornsilk
+-	ColorCrimson
+-	ColorDarkBlue
+-	ColorDarkCyan
+-	ColorDarkGoldenrod
+-	ColorDarkGray
+-	ColorDarkGreen
+-	ColorDarkKhaki
+-	ColorDarkMagenta
+-	ColorDarkOliveGreen
+-	ColorDarkOrange
+-	ColorDarkOrchid
+-	ColorDarkRed
+-	ColorDarkSalmon
+-	ColorDarkSeaGreen
+-	ColorDarkSlateBlue
+-	ColorDarkSlateGray
+-	ColorDarkTurquoise
+-	ColorDarkViolet
+-	ColorDeepPink
+-	ColorDeepSkyBlue
+-	ColorDimGray
+-	ColorDodgerBlue
+-	ColorFireBrick
+-	ColorFloralWhite
+-	ColorForestGreen
+-	ColorGainsboro
+-	ColorGhostWhite
+-	ColorGold
+-	ColorGoldenrod
+-	ColorGreenYellow
+-	ColorHoneydew
+-	ColorHotPink
+-	ColorIndianRed
+-	ColorIndigo
+-	ColorIvory
+-	ColorKhaki
+-	ColorLavender
+-	ColorLavenderBlush
+-	ColorLawnGreen
+-	ColorLemonChiffon
+-	ColorLightBlue
+-	ColorLightCoral
+-	ColorLightCyan
+-	ColorLightGoldenrodYellow
+-	ColorLightGray
+-	ColorLightGreen
+-	ColorLightPink
+-	ColorLightSalmon
+-	ColorLightSeaGreen
+-	ColorLightSkyBlue
+-	ColorLightSlateGray
+-	ColorLightSteelBlue
+-	ColorLightYellow
+-	ColorLimeGreen
+-	ColorLinen
+-	ColorMediumAquamarine
+-	ColorMediumBlue
+-	ColorMediumOrchid
+-	ColorMediumPurple
+-	ColorMediumSeaGreen
+-	ColorMediumSlateBlue
+-	ColorMediumSpringGreen
+-	ColorMediumTurquoise
+-	ColorMediumVioletRed
+-	ColorMidnightBlue
+-	ColorMintCream
+-	ColorMistyRose
+-	ColorMoccasin
+-	ColorNavajoWhite
+-	ColorOldLace
+-	ColorOliveDrab
+-	ColorOrange
+-	ColorOrangeRed
+-	ColorOrchid
+-	ColorPaleGoldenrod
+-	ColorPaleGreen
+-	ColorPaleTurquoise
+-	ColorPaleVioletRed
+-	ColorPapayaWhip
+-	ColorPeachPuff
+-	ColorPeru
+-	ColorPink
+-	ColorPlum
+-	ColorPowderBlue
+-	ColorRebeccaPurple
+-	ColorRosyBrown
+-	ColorRoyalBlue
+-	ColorSaddleBrown
+-	ColorSalmon
+-	ColorSandyBrown
+-	ColorSeaGreen
+-	ColorSeashell
+-	ColorSienna
+-	ColorSkyblue
+-	ColorSlateBlue
+-	ColorSlateGray
+-	ColorSnow
+-	ColorSpringGreen
+-	ColorSteelBlue
+-	ColorTan
+-	ColorThistle
+-	ColorTomato
+-	ColorTurquoise
+-	ColorViolet
+-	ColorWheat
+-	ColorWhiteSmoke
+-	ColorYellowGreen
++	ColorAliceBlue            = ColorIsRGB | ColorValid | 0xF0F8FF
++	ColorAntiqueWhite         = ColorIsRGB | ColorValid | 0xFAEBD7
++	ColorAquaMarine           = ColorIsRGB | ColorValid | 0x7FFFD4
++	ColorAzure                = ColorIsRGB | ColorValid | 0xF0FFFF
++	ColorBeige                = ColorIsRGB | ColorValid | 0xF5F5DC
++	ColorBisque               = ColorIsRGB | ColorValid | 0xFFE4C4
++	ColorBlanchedAlmond       = ColorIsRGB | ColorValid | 0xFFEBCD
++	ColorBlueViolet           = ColorIsRGB | ColorValid | 0x8A2BE2
++	ColorBrown                = ColorIsRGB | ColorValid | 0xA52A2A
++	ColorBurlyWood            = ColorIsRGB | ColorValid | 0xDEB887
++	ColorCadetBlue            = ColorIsRGB | ColorValid | 0x5F9EA0
++	ColorChartreuse           = ColorIsRGB | ColorValid | 0x7FFF00
++	ColorChocolate            = ColorIsRGB | ColorValid | 0xD2691E
++	ColorCoral                = ColorIsRGB | ColorValid | 0xFF7F50
++	ColorCornflowerBlue       = ColorIsRGB | ColorValid | 0x6495ED
++	ColorCornsilk             = ColorIsRGB | ColorValid | 0xFFF8DC
++	ColorCrimson              = ColorIsRGB | ColorValid | 0xDC143C
++	ColorDarkBlue             = ColorIsRGB | ColorValid | 0x00008B
++	ColorDarkCyan             = ColorIsRGB | ColorValid | 0x008B8B
++	ColorDarkGoldenrod        = ColorIsRGB | ColorValid | 0xB8860B
++	ColorDarkGray             = ColorIsRGB | ColorValid | 0xA9A9A9
++	ColorDarkGreen            = ColorIsRGB | ColorValid | 0x006400
++	ColorDarkKhaki            = ColorIsRGB | ColorValid | 0xBDB76B
++	ColorDarkMagenta          = ColorIsRGB | ColorValid | 0x8B008B
++	ColorDarkOliveGreen       = ColorIsRGB | ColorValid | 0x556B2F
++	ColorDarkOrange           = ColorIsRGB | ColorValid | 0xFF8C00
++	ColorDarkOrchid           = ColorIsRGB | ColorValid | 0x9932CC
++	ColorDarkRed              = ColorIsRGB | ColorValid | 0x8B0000
++	ColorDarkSalmon           = ColorIsRGB | ColorValid | 0xE9967A
++	ColorDarkSeaGreen         = ColorIsRGB | ColorValid | 0x8FBC8F
++	ColorDarkSlateBlue        = ColorIsRGB | ColorValid | 0x483D8B
++	ColorDarkSlateGray        = ColorIsRGB | ColorValid | 0x2F4F4F
++	ColorDarkTurquoise        = ColorIsRGB | ColorValid | 0x00CED1
++	ColorDarkViolet           = ColorIsRGB | ColorValid | 0x9400D3
++	ColorDeepPink             = ColorIsRGB | ColorValid | 0xFF1493
++	ColorDeepSkyBlue          = ColorIsRGB | ColorValid | 0x00BFFF
++	ColorDimGray              = ColorIsRGB | ColorValid | 0x696969
++	ColorDodgerBlue           = ColorIsRGB | ColorValid | 0x1E90FF
++	ColorFireBrick            = ColorIsRGB | ColorValid | 0xB22222
++	ColorFloralWhite          = ColorIsRGB | ColorValid | 0xFFFAF0
++	ColorForestGreen          = ColorIsRGB | ColorValid | 0x228B22
++	ColorGainsboro            = ColorIsRGB | ColorValid | 0xDCDCDC
++	ColorGhostWhite           = ColorIsRGB | ColorValid | 0xF8F8FF
++	ColorGold                 = ColorIsRGB | ColorValid | 0xFFD700
++	ColorGoldenrod            = ColorIsRGB | ColorValid | 0xDAA520
++	ColorGreenYellow          = ColorIsRGB | ColorValid | 0xADFF2F
++	ColorHoneydew             = ColorIsRGB | ColorValid | 0xF0FFF0
++	ColorHotPink              = ColorIsRGB | ColorValid | 0xFF69B4
++	ColorIndianRed            = ColorIsRGB | ColorValid | 0xCD5C5C
++	ColorIndigo               = ColorIsRGB | ColorValid | 0x4B0082
++	ColorIvory                = ColorIsRGB | ColorValid | 0xFFFFF0
++	ColorKhaki                = ColorIsRGB | ColorValid | 0xF0E68C
++	ColorLavender             = ColorIsRGB | ColorValid | 0xE6E6FA
++	ColorLavenderBlush        = ColorIsRGB | ColorValid | 0xFFF0F5
++	ColorLawnGreen            = ColorIsRGB | ColorValid | 0x7CFC00
++	ColorLemonChiffon         = ColorIsRGB | ColorValid | 0xFFFACD
++	ColorLightBlue            = ColorIsRGB | ColorValid | 0xADD8E6
++	ColorLightCoral           = ColorIsRGB | ColorValid | 0xF08080
++	ColorLightCyan            = ColorIsRGB | ColorValid | 0xE0FFFF
++	ColorLightGoldenrodYellow = ColorIsRGB | ColorValid | 0xFAFAD2
++	ColorLightGray            = ColorIsRGB | ColorValid | 0xD3D3D3
++	ColorLightGreen           = ColorIsRGB | ColorValid | 0x90EE90
++	ColorLightPink            = ColorIsRGB | ColorValid | 0xFFB6C1
++	ColorLightSalmon          = ColorIsRGB | ColorValid | 0xFFA07A
++	ColorLightSeaGreen        = ColorIsRGB | ColorValid | 0x20B2AA
++	ColorLightSkyBlue         = ColorIsRGB | ColorValid | 0x87CEFA
++	ColorLightSlateGray       = ColorIsRGB | ColorValid | 0x778899
++	ColorLightSteelBlue       = ColorIsRGB | ColorValid | 0xB0C4DE
++	ColorLightYellow          = ColorIsRGB | ColorValid | 0xFFFFE0
++	ColorLimeGreen            = ColorIsRGB | ColorValid | 0x32CD32
++	ColorLinen                = ColorIsRGB | ColorValid | 0xFAF0E6
++	ColorMediumAquamarine     = ColorIsRGB | ColorValid | 0x66CDAA
++	ColorMediumBlue           = ColorIsRGB | ColorValid | 0x0000CD
++	ColorMediumOrchid         = ColorIsRGB | ColorValid | 0xBA55D3
++	ColorMediumPurple         = ColorIsRGB | ColorValid | 0x9370DB
++	ColorMediumSeaGreen       = ColorIsRGB | ColorValid | 0x3CB371
++	ColorMediumSlateBlue      = ColorIsRGB | ColorValid | 0x7B68EE
++	ColorMediumSpringGreen    = ColorIsRGB | ColorValid | 0x00FA9A
++	ColorMediumTurquoise      = ColorIsRGB | ColorValid | 0x48D1CC
++	ColorMediumVioletRed      = ColorIsRGB | ColorValid | 0xC71585
++	ColorMidnightBlue         = ColorIsRGB | ColorValid | 0x191970
++	ColorMintCream            = ColorIsRGB | ColorValid | 0xF5FFFA
++	ColorMistyRose            = ColorIsRGB | ColorValid | 0xFFE4E1
++	ColorMoccasin             = ColorIsRGB | ColorValid | 0xFFE4B5
++	ColorNavajoWhite          = ColorIsRGB | ColorValid | 0xFFDEAD
++	ColorOldLace              = ColorIsRGB | ColorValid | 0xFDF5E6
++	ColorOliveDrab            = ColorIsRGB | ColorValid | 0x6B8E23
++	ColorOrange               = ColorIsRGB | ColorValid | 0xFFA500
++	ColorOrangeRed            = ColorIsRGB | ColorValid | 0xFF4500
++	ColorOrchid               = ColorIsRGB | ColorValid | 0xDA70D6
++	ColorPaleGoldenrod        = ColorIsRGB | ColorValid | 0xEEE8AA
++	ColorPaleGreen            = ColorIsRGB | ColorValid | 0x98FB98
++	ColorPaleTurquoise        = ColorIsRGB | ColorValid | 0xAFEEEE
++	ColorPaleVioletRed        = ColorIsRGB | ColorValid | 0xDB7093
++	ColorPapayaWhip           = ColorIsRGB | ColorValid | 0xFFEFD5
++	ColorPeachPuff            = ColorIsRGB | ColorValid | 0xFFDAB9
++	ColorPeru                 = ColorIsRGB | ColorValid | 0xCD853F
++	ColorPink                 = ColorIsRGB | ColorValid | 0xFFC0CB
++	ColorPlum                 = ColorIsRGB | ColorValid | 0xDDA0DD
++	ColorPowderBlue           = ColorIsRGB | ColorValid | 0xB0E0E6
++	ColorRebeccaPurple        = ColorIsRGB | ColorValid | 0x663399
++	ColorRosyBrown            = ColorIsRGB | ColorValid | 0xBC8F8F
++	ColorRoyalBlue            = ColorIsRGB | ColorValid | 0x4169E1
++	ColorSaddleBrown          = ColorIsRGB | ColorValid | 0x8B4513
++	ColorSalmon               = ColorIsRGB | ColorValid | 0xFA8072
++	ColorSandyBrown           = ColorIsRGB | ColorValid | 0xF4A460
++	ColorSeaGreen             = ColorIsRGB | ColorValid | 0x2E8B57
++	ColorSeashell             = ColorIsRGB | ColorValid | 0xFFF5EE
++	ColorSienna               = ColorIsRGB | ColorValid | 0xA0522D
++	ColorSkyblue              = ColorIsRGB | ColorValid | 0x87CEEB
++	ColorSlateBlue            = ColorIsRGB | ColorValid | 0x6A5ACD
++	ColorSlateGray            = ColorIsRGB | ColorValid | 0x708090
++	ColorSnow                 = ColorIsRGB | ColorValid | 0xFFFAFA
++	ColorSpringGreen          = ColorIsRGB | ColorValid | 0x00FF7F
++	ColorSteelBlue            = ColorIsRGB | ColorValid | 0x4682B4
++	ColorTan                  = ColorIsRGB | ColorValid | 0xD2B48C
++	ColorThistle              = ColorIsRGB | ColorValid | 0xD8BFD8
++	ColorTomato               = ColorIsRGB | ColorValid | 0xFF6347
++	ColorTurquoise            = ColorIsRGB | ColorValid | 0x40E0D0
++	ColorViolet               = ColorIsRGB | ColorValid | 0xEE82EE
++	ColorWheat                = ColorIsRGB | ColorValid | 0xF5DEB3
++	ColorWhiteSmoke           = ColorIsRGB | ColorValid | 0xF5F5F5
++	ColorYellowGreen          = ColorIsRGB | ColorValid | 0x9ACD32
+ )
+ 
+ // These are aliases for the color gray, because some of us spell
+@@ -835,6 +839,11 @@ const (
+ 	// ColorReset is used to indicate that the color should use the
+ 	// vanilla terminal colors.  (Basically go back to the defaults.)
+ 	ColorReset = ColorSpecial | iota
++
++	// ColorNone indicates that we should not change the color from
++	// whatever is already displayed.  This can only be used in limited
++	// circumstances.
++	ColorNone
+ )
+ 
+ // ColorNames holds the written names of colors. Useful to present a list of
+@@ -998,15 +1007,56 @@ func (c Color) IsRGB() bool {
+ 	return c&(ColorValid|ColorIsRGB) == (ColorValid | ColorIsRGB)
+ }
+ 
++// CSS returns the CSS hex string ( #ABCDEF ) if valid
++// if not a valid color returns empty string
++func (c Color) CSS() string {
++	if !c.Valid() {
++		return ""
++	}
++	return fmt.Sprintf("#%06X", c.Hex())
++}
++
++// String implements fmt.Stringer to return either the
++// W3C name if it has one or the CSS hex string '#ABCDEF'
++func (c Color) String() string {
++	if !c.Valid() {
++		switch c {
++		case ColorNone:
++			return "none"
++		case ColorDefault:
++			return "default"
++		case ColorReset:
++			return "reset"
++		}
++		return ""
++	}
++	return c.Name(true)
++}
++
++// Name returns W3C name or an empty string if no arguments
++// if passed true as an argument it will falls back to
++// the CSS hex string if no W3C name found '#ABCDEF'
++func (c Color) Name(css ...bool) string {
++	for name, hex := range ColorNames {
++		if c == hex {
++			return name
++		}
++	}
++	if len(css) > 0 && css[0] {
++		return c.CSS()
++	}
++	return ""
++}
++
+ // Hex returns the color's hexadecimal RGB 24-bit value with each component
+-// consisting of a single byte, ala R << 16 | G << 8 | B.  If the color
++// consisting of a single byte, R << 16 | G << 8 | B.  If the color
+ // is unknown or unset, -1 is returned.
+ func (c Color) Hex() int32 {
+ 	if !c.Valid() {
+ 		return -1
+ 	}
+ 	if c&ColorIsRGB != 0 {
+-		return int32(c) & 0xffffff
++		return int32(c & 0xffffff)
+ 	}
+ 	if v, ok := ColorValues[c]; ok {
+ 		return v
+@@ -1033,7 +1083,7 @@ func (c Color) TrueColor() Color {
+ 		return ColorDefault
+ 	}
+ 	if c&ColorIsRGB != 0 {
+-		return c
++		return c | ColorValid
+ 	}
+ 	return Color(c.Hex()) | ColorIsRGB | ColorValid
+ }
+@@ -1066,4 +1116,13 @@ func GetColor(name string) Color {
+ // PaletteColor creates a color based on the palette index.
+ func PaletteColor(index int) Color {
+ 	return Color(index) | ColorValid
+-}
+\ No newline at end of file
++}
++
++// FromImageColor converts an image/color.Color into tcell.Color.
++// The alpha value is dropped, so it should be tracked separately if it is
++// needed.
++func FromImageColor(imageColor ic.Color) Color {
++	r, g, b, _ := imageColor.RGBA()
++	// NOTE image/color.Color RGB values range is [0, 0xFFFF] as uint32
++	return NewRGBColor(int32(r>>8), int32(g>>8), int32(b>>8))
++}
+diff --git i/color_test.go w/color_test.go
+index a724f1f..cd63403 100644
+--- i/color_test.go
++++ w/color_test.go
+@@ -1,4 +1,4 @@
+-// Copyright 2018 The TCell Authors
++// Copyright 2023 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -15,6 +15,7 @@
+ package tcell
+ 
+ import (
++	ic "image/color"
+ 	"testing"
+ )
+ 
+@@ -23,24 +24,29 @@ func TestColorValues(t *testing.T) {
+ 		color Color
+ 		hex   int32
+ 	}{
+-		{ColorRed, 0x00FF0000},
+-		{ColorGreen, 0x00008000},
+-		{ColorLime, 0x0000FF00},
+-		{ColorBlue, 0x000000FF},
+-		{ColorBlack, 0x00000000},
+-		{ColorWhite, 0x00FFFFFF},
+-		{ColorSilver, 0x00C0C0C0},
++		{ColorRed, 0xFF0000},
++		{ColorGreen, 0x008000},
++		{ColorLime, 0x00FF00},
++		{ColorBlue, 0x0000FF},
++		{ColorBlack, 0x000000},
++		{ColorWhite, 0xFFFFFF},
++		{ColorSilver, 0xC0C0C0},
++		{ColorNavy, 0x000080},
+ 	}
+ 
+ 	for _, tc := range values {
+ 		if tc.color.Hex() != tc.hex {
+ 			t.Errorf("Color: %x != %x", tc.color.Hex(), tc.hex)
+ 		}
++
++		if tc.color.TrueColor().Hex() != tc.hex {
++			t.Errorf("TrueColor %x != %x", tc.color.TrueColor().Hex(), tc.hex)
++		}
+ 	}
+ }
+ 
+ func TestColorFitting(t *testing.T) {
+-	pal := []Color{}
++	var pal []Color
+ 	for i := 0; i < 255; i++ {
+ 		pal = append(pal, PaletteColor(i))
+ 	}
+@@ -80,7 +86,7 @@ func TestColorNameLookup(t *testing.T) {
+ 	}{
+ 		{"#FF0000", ColorRed, true},
+ 		{"black", ColorBlack, false},
+-		{"orange", ColorOrange, false},
++		{"orange", ColorOrange, true},
+ 		{"door", ColorDefault, false},
+ 	}
+ 	for _, v := range values {
+@@ -89,12 +95,12 @@ func TestColorNameLookup(t *testing.T) {
+ 			t.Errorf("Wrong color for %v: %v", v.name, c.Hex())
+ 		}
+ 		if v.rgb {
+-			if c & ColorIsRGB == 0 {
+-				t.Errorf("Color should have RGB")
++			if c&ColorIsRGB == 0 {
++				t.Errorf("Color should have RGB: %v", v.name)
+ 			}
+ 		} else {
+-			if c & ColorIsRGB != 0 {
+-				t.Errorf("Named color should not be RGB")
++			if c&ColorIsRGB != 0 {
++				t.Errorf("Named color should not be RGB: %v", v.name)
+ 			}
+ 		}
+ 
+@@ -102,6 +108,17 @@ func TestColorNameLookup(t *testing.T) {
+ 			t.Errorf("TrueColor did not match")
+ 		}
+ 	}
++
++	// these colors only have strings (for debugging), you cannot use them to create a color
++	if ColorNone.String() != "none" {
++		t.Errorf("ColorNone did not match")
++	}
++	if ColorReset.String() != "reset" {
++		t.Errorf("ColorReset did not match")
++	}
++	if ColorDefault.String() != "default" {
++		t.Errorf("ColorDefault did not match")
++	}
+ }
+ 
+ func TestColorRGB(t *testing.T) {
+@@ -110,3 +127,50 @@ func TestColorRGB(t *testing.T) {
+ 		t.Errorf("RGB wrong (%x, %x, %x)", r, g, b)
+ 	}
+ }
++
++func TestFromImageColor(t *testing.T) {
++	red := ic.RGBA{0xFF, 0x00, 0x00, 0x00}
++	white := ic.Gray{0xFF}
++	cyan := ic.CMYK{0xFF, 0x00, 0x00, 0x00}
++
++	if hex := FromImageColor(red).Hex(); hex != 0xFF0000 {
++		t.Errorf("%v is not 0xFF0000", hex)
++	}
++	if hex := FromImageColor(white).Hex(); hex != 0xFFFFFF {
++		t.Errorf("%v is not 0xFFFFFF", hex)
++	}
++	if hex := FromImageColor(cyan).Hex(); hex != 0x00FFFF {
++		t.Errorf("%v is not 0x00FFFF", hex)
++	}
++}
++
++func TestColorNone(t *testing.T) {
++	s := mkTestScreen(t, "")
++	s.Init()
++	s.SetSize(80, 24)
++	st := StyleDefault.Foreground(ColorBlack).Background(ColorWhite)
++	s.Fill(' ', st)
++	if _, s1, _ := s.Get(0, 0); s1 != st {
++		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
++	}
++	st2 := st.Foreground(ColorNone).Background(ColorNone)
++	s.Fill('X', st2)
++	if _, s1, _ := s.Get(0, 0); s1 != st {
++		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
++	}
++	red := st.Foreground(ColorRed).Background(ColorNone)
++	s.Put(1, 0, " ", red)
++	if _, s1, _ := s.Get(1, 0); s1 != red.Background(st.bg) {
++		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
++	}
++	if _, s1, _ := s.Get(0, 0); s1 != st {
++		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
++	}
++	pink := st.Background(ColorPink).Foreground(ColorNone)
++	s.Put(1, 0, " ", pink)
++	combined := pink.Foreground(ColorRed)
++
++	if _, s1, _ := s.Get(1, 0); s1 != combined {
++		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
++	}
++}
+diff --git i/console_stub.go w/console_stub.go
+index fda2f09..6ff7e92 100644
+--- i/console_stub.go
++++ w/console_stub.go
+@@ -1,3 +1,4 @@
++//go:build !windows
+ // +build !windows
+ 
+ // Copyright 2015 The TCell Authors
+diff --git i/console_win.go w/console_win.go
+index c946c02..e35d10c 100644
+--- i/console_win.go
++++ w/console_win.go
+@@ -1,6 +1,7 @@
++//go:build windows
+ // +build windows
+ 
+-// Copyright 2020 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -30,29 +31,35 @@ import (
+ type cScreen struct {
+ 	in         syscall.Handle
+ 	out        syscall.Handle
+-	out_buffer []uint16
+ 	cancelflag syscall.Handle
+ 	scandone   chan struct{}
+-	evch       chan Event
+ 	quit       chan struct{}
+ 	curx       int
+ 	cury       int
+ 	style      Style
+-	clear      bool
+ 	fini       bool
+-	vten       bool
+ 	truecolor  bool
++	running    bool
++	disableAlt bool // disable the alternate screen
++	title      string
+ 
+ 	w int
+ 	h int
+ 
+-	oscreen consoleInfo
+-	ocursor cursorInfo
+-	oimode  uint32
+-	oomode  uint32
+-	cells   CellBuffer
++	oscreen     consoleInfo
++	ocursor     cursorInfo
++	cursorStyle CursorStyle
++	cursorColor Color
++	oimode      uint32
++	oomode      uint32
++	cells       CellBuffer
++	focusEnable bool
+ 
+-	finiOnce sync.Once
++	mouseEnabled bool
++	wg           sync.WaitGroup
++	eventQ       chan Event
++	stopQ        chan struct{}
++	finiOnce     sync.Once
+ 
+ 	sync.Mutex
+ }
+@@ -98,7 +105,6 @@ var winColors = map[Color]Color{
+ }
+ 
+ var (
+-	k32 = syscall.NewLazyDLL("kernel32.dll")
+ 	u32 = syscall.NewLazyDLL("user32.dll")
+ )
+ 
+@@ -109,22 +115,13 @@ var (
+ // characters (Unicode) are in use.  The documentation refers to them
+ // without this suffix, as the resolution is made via preprocessor.
+ var (
+-	procReadConsoleInput           = k32.NewProc("ReadConsoleInputW")
+-	procWaitForMultipleObjects     = k32.NewProc("WaitForMultipleObjects")
+-	procCreateEvent                = k32.NewProc("CreateEventW")
+-	procSetEvent                   = k32.NewProc("SetEvent")
+-	procGetConsoleCursorInfo       = k32.NewProc("GetConsoleCursorInfo")
+-	procSetConsoleCursorInfo       = k32.NewProc("SetConsoleCursorInfo")
+-	procSetConsoleCursorPosition   = k32.NewProc("SetConsoleCursorPosition")
+-	procSetConsoleMode             = k32.NewProc("SetConsoleMode")
+-	procGetConsoleMode             = k32.NewProc("GetConsoleMode")
+-	procGetConsoleScreenBufferInfo = k32.NewProc("GetConsoleScreenBufferInfo")
+-	procFillConsoleOutputAttribute = k32.NewProc("FillConsoleOutputAttribute")
+-	procFillConsoleOutputCharacter = k32.NewProc("FillConsoleOutputCharacterW")
+-	procSetConsoleWindowInfo       = k32.NewProc("SetConsoleWindowInfo")
+-	procSetConsoleScreenBufferSize = k32.NewProc("SetConsoleScreenBufferSize")
+-	procSetConsoleTextAttribute    = k32.NewProc("SetConsoleTextAttribute")
+-	procMessageBeep                = u32.NewProc("MessageBeep")
++	procGetConsoleCursorInfo        = k32.NewProc("GetConsoleCursorInfo")
++	procSetConsoleCursorInfo        = k32.NewProc("SetConsoleCursorInfo")
++	procSetConsoleWindowInfo        = k32.NewProc("SetConsoleWindowInfo")
++	procSetConsoleScreenBufferSize  = k32.NewProc("SetConsoleScreenBufferSize")
++	procSetConsoleTextAttribute     = k32.NewProc("SetConsoleTextAttribute")
++	procGetLargestConsoleWindowSize = k32.NewProc("GetLargestConsoleWindowSize")
++	procMessageBeep                 = u32.NewProc("MessageBeep")
+ )
+ 
+ const (
+@@ -134,32 +131,70 @@ const (
+ 
+ const (
+ 	// VT100/XTerm escapes understood by the console
+-	vtShowCursor = "\x1b[?25h"
+-	vtHideCursor = "\x1b[?25l"
+-	vtCursorPos  = "\x1b[%d;%dH" // Note that it is Y then X
+-	vtSgr0       = "\x1b[0m"
+-	vtBold       = "\x1b[1m"
+-	vtUnderline  = "\x1b[4m"
+-	vtBlink      = "\x1b[5m" // Not sure this is processed
+-	vtReverse    = "\x1b[7m"
+-	vtSetFg      = "\x1b[38;5;%dm"
+-	vtSetBg      = "\x1b[48;5;%dm"
+-	vtSetFgRGB   = "\x1b[38;2;%d;%d;%dm" // RGB
+-	vtSetBgRGB   = "\x1b[48;2;%d;%d;%dm" // RGB
++	vtShowCursor              = "\x1b[?25h"
++	vtHideCursor              = "\x1b[?25l"
++	vtCursorPos               = "\x1b[%d;%dH" // Note that it is Y then X
++	vtSgr0                    = "\x1b[0m"
++	vtBold                    = "\x1b[1m"
++	vtUnderline               = "\x1b[4m"
++	vtBlink                   = "\x1b[5m" // Not sure if this is processed
++	vtReverse                 = "\x1b[7m"
++	vtSetFg                   = "\x1b[38;5;%dm"
++	vtSetBg                   = "\x1b[48;5;%dm"
++	vtSetFgRGB                = "\x1b[38;2;%d;%d;%dm" // RGB
++	vtSetBgRGB                = "\x1b[48;2;%d;%d;%dm" // RGB
++	vtCursorDefault           = "\x1b[0 q"
++	vtCursorBlinkingBlock     = "\x1b[1 q"
++	vtCursorSteadyBlock       = "\x1b[2 q"
++	vtCursorBlinkingUnderline = "\x1b[3 q"
++	vtCursorSteadyUnderline   = "\x1b[4 q"
++	vtCursorBlinkingBar       = "\x1b[5 q"
++	vtCursorSteadyBar         = "\x1b[6 q"
++	vtDisableAm               = "\x1b[?7l"
++	vtEnableAm                = "\x1b[?7h"
++	vtEnterCA                 = "\x1b[?1049h\x1b[22;0;0t"
++	vtExitCA                  = "\x1b[?1049l\x1b[23;0;0t"
++	vtDoubleUnderline         = "\x1b[4:2m"
++	vtCurlyUnderline          = "\x1b[4:3m"
++	vtDottedUnderline         = "\x1b[4:4m"
++	vtDashedUnderline         = "\x1b[4:5m"
++	vtUnderColor              = "\x1b[58:5:%dm"
++	vtUnderColorRGB           = "\x1b[58:2::%d:%d:%dm"
++	vtUnderColorReset         = "\x1b[59m"
++	vtEnterUrl                = "\x1b]8;%s;%s\x1b\\" // NB arg 1 is id, arg 2 is url
++	vtExitUrl                 = "\x1b]8;;\x1b\\"
++	vtCursorColorRGB          = "\x1b]12;#%02x%02x%02x\007"
++	vtCursorColorReset        = "\x1b]112\007"
++	vtSaveTitle               = "\x1b[22;2t"
++	vtRestoreTitle            = "\x1b[23;2t"
++	vtSetTitle                = "\x1b]2;%s\x1b\\"
+ )
+ 
++var vtCursorStyles = map[CursorStyle]string{
++	CursorStyleDefault:           vtCursorDefault,
++	CursorStyleBlinkingBlock:     vtCursorBlinkingBlock,
++	CursorStyleSteadyBlock:       vtCursorSteadyBlock,
++	CursorStyleBlinkingUnderline: vtCursorBlinkingUnderline,
++	CursorStyleSteadyUnderline:   vtCursorSteadyUnderline,
++	CursorStyleBlinkingBar:       vtCursorBlinkingBar,
++	CursorStyleSteadyBar:         vtCursorSteadyBar,
++}
++
+ // NewConsoleScreen returns a Screen for the Windows console associated
+ // with the current process.  The Screen makes use of the Windows Console
+ // API to display content and read events.
++//
++// Deprecated: The console API based implementation will be fully replaced
++// with the VT based model.  Use NewScreen() to get a reasonable screen
++// by default.
+ func NewConsoleScreen() (Screen, error) {
+-	return &cScreen{}, nil
++	return &baseScreen{screenImpl: &cScreen{}}, nil
+ }
+ 
+ func (s *cScreen) Init() error {
+-	s.evch = make(chan Event, 10)
++	s.eventQ = make(chan Event, 10)
+ 	s.quit = make(chan struct{})
+ 	s.scandone = make(chan struct{})
+-
+ 	in, e := syscall.Open("CONIN$", syscall.O_RDWR, 0)
+ 	if e != nil {
+ 		return e
+@@ -167,24 +202,13 @@ func (s *cScreen) Init() error {
+ 	s.in = in
+ 	out, e := syscall.Open("CONOUT$", syscall.O_RDWR, 0)
+ 	if e != nil {
+-		syscall.Close(s.in)
++		_ = syscall.Close(s.in)
+ 		return e
+ 	}
+ 	s.out = out
+ 
+-	s.out_buffer = make([]uint16, 0)
+-
+ 	s.truecolor = true
+ 
+-	// ConEmu handling of colors and scrolling when in terminal
+-	// mode is extremely problematic at the best.  The color
+-	// palette will scroll even though characters do not, when
+-	// emiting stuff for the last character.  In the future we
+-	// might change this to look at specific versions of ConEmu
+-	// if they fix the bug.
+-	if os.Getenv("ConEmuPID") != "" {
+-		s.truecolor = false
+-	}
+ 	switch os.Getenv("TCELL_TRUECOLOR") {
+ 	case "disable":
+ 		s.truecolor = false
+@@ -192,16 +216,6 @@ func (s *cScreen) Init() error {
+ 		s.truecolor = true
+ 	}
+ 
+-	cf, _, e := procCreateEvent.Call(
+-		uintptr(0),
+-		uintptr(1),
+-		uintptr(0),
+-		uintptr(0))
+-	if cf == uintptr(0) {
+-		return e
+-	}
+-	s.cancelflag = syscall.Handle(cf)
+-
+ 	s.Lock()
+ 
+ 	s.curx = -1
+@@ -214,29 +228,24 @@ func (s *cScreen) Init() error {
+ 	s.resize()
+ 
+ 	s.fini = false
+-	s.setInMode(modeResizeEn | modeExtndFlg)
++	s.setInMode(modeResizeEn | modeExtendFlg)
+ 
+-	// 24-bit color is opt-in for now, because we can't figure out
+-	// to make it work consistently.
+-	if s.truecolor {
+-		s.setOutMode(modeVtOutput | modeNoAutoNL | modeCookedOut)
+-		var omode uint32
+-		s.getOutMode(&omode)
+-		if omode&modeVtOutput == modeVtOutput {
+-			s.vten = true
+-		} else {
+-			s.truecolor = false
+-		}
+-	} else {
+-		s.setOutMode(0)
++	switch os.Getenv("TCELL_ALTSCREEN") {
++	case "enable":
++		s.disableAlt = false // also the default
++	case "disable":
++		s.disableAlt = true
++	}
++	s.setOutMode(modeVtOutput | modeNoAutoNL | modeCookedOut | modeUnderline)
++	var om uint32
++	s.getOutMode(&om)
++	if om&modeVtOutput != modeVtOutput {
++		return errors.New("failed to initialize: VT output not supported?")
+ 	}
+ 
+-	s.clearScreen(s.style)
+-	s.hideCursor()
+ 	s.Unlock()
+-	go s.scanInput()
+ 
+-	return nil
++	return s.engage()
+ }
+ 
+ func (s *cScreen) CharacterSet() string {
+@@ -244,66 +253,124 @@ func (s *cScreen) CharacterSet() string {
+ 	return "UTF-16LE"
+ }
+ 
+-func (s *cScreen) EnableMouse() {
+-	s.setInMode(modeResizeEn | modeMouseEn | modeExtndFlg)
++func (s *cScreen) EnableMouse(...MouseFlags) {
++	s.Lock()
++	s.mouseEnabled = true
++	s.enableMouse(true)
++	s.Unlock()
+ }
+ 
+ func (s *cScreen) DisableMouse() {
+-	s.setInMode(modeResizeEn | modeExtndFlg)
++	s.Lock()
++	s.mouseEnabled = false
++	s.enableMouse(false)
++	s.Unlock()
++}
++
++func (s *cScreen) enableMouse(on bool) {
++	if on {
++		s.setInMode(modeResizeEn | modeMouseEn | modeExtendFlg)
++	} else {
++		s.setInMode(modeResizeEn | modeExtendFlg)
++	}
++}
++
++// Windows lacks bracketed paste (for now)
++
++func (s *cScreen) EnablePaste() {}
++
++func (s *cScreen) DisablePaste() {}
++
++func (s *cScreen) EnableFocus() {
++	s.Lock()
++	s.focusEnable = true
++	s.Unlock()
++}
++
++func (s *cScreen) DisableFocus() {
++	s.Lock()
++	s.focusEnable = false
++	s.Unlock()
+ }
+ 
+ func (s *cScreen) Fini() {
+-	s.finiOnce.Do(s.finish)
++	s.finiOnce.Do(func() {
++		close(s.quit)
++		s.disengage()
++	})
+ }
+ 
+-func (s *cScreen) finish() {
++func (s *cScreen) disengage() {
+ 	s.Lock()
+-	s.style = StyleDefault
+-	s.curx = -1
+-	s.cury = -1
+-	s.fini = true
+-	s.vten = false
++	if !s.running {
++		s.Unlock()
++		return
++	}
++	s.running = false
++	stopQ := s.stopQ
++	_, _, _ = procSetEvent.Call(uintptr(s.cancelflag))
++	close(stopQ)
+ 	s.Unlock()
+ 
++	s.wg.Wait()
++
++	s.emitVtString(vtCursorStyles[CursorStyleDefault])
++	s.emitVtString(vtCursorColorReset)
++	s.emitVtString(vtEnableAm)
++	if !s.disableAlt {
++		s.emitVtString(vtRestoreTitle)
++		s.emitVtString(vtExitCA)
++	}
+ 	s.setCursorInfo(&s.ocursor)
++	s.setBufferSize(int(s.oscreen.size.x), int(s.oscreen.size.y))
+ 	s.setInMode(s.oimode)
+ 	s.setOutMode(s.oomode)
+-	s.setBufferSize(int(s.oscreen.size.x), int(s.oscreen.size.y))
+-	s.clearScreen(StyleDefault)
+-	s.setCursorPos(0, 0)
+-	procSetConsoleTextAttribute.Call(
++	_, _, _ = procSetConsoleTextAttribute.Call(
+ 		uintptr(s.out),
+ 		uintptr(s.mapStyle(StyleDefault)))
+-
+-	close(s.quit)
+-	procSetEvent.Call(uintptr(s.cancelflag))
+-	// Block until scanInput returns; this prevents a race condition on Win 8+
+-	// which causes syscall.Close to block until another keypress is read.
+-	<-s.scandone
+-	syscall.Close(s.in)
+-	syscall.Close(s.out)
+ }
+ 
+-func (s *cScreen) PostEventWait(ev Event) {
+-	s.evch <- ev
+-}
+-
+-func (s *cScreen) PostEvent(ev Event) error {
+-	select {
+-	case s.evch <- ev:
+-		return nil
+-	default:
+-		return ErrEventQFull
++func (s *cScreen) engage() error {
++	s.Lock()
++	defer s.Unlock()
++	if s.running {
++		return errors.New("already engaged")
+ 	}
+-}
+-
+-func (s *cScreen) PollEvent() Event {
+-	select {
+-	case <-s.quit:
+-		return nil
+-	case ev := <-s.evch:
+-		return ev
++	s.stopQ = make(chan struct{})
++	cf, _, e := procCreateEvent.Call(
++		uintptr(0),
++		uintptr(1),
++		uintptr(0),
++		uintptr(0))
++	if cf == uintptr(0) {
++		return e
+ 	}
++	s.running = true
++	s.cancelflag = syscall.Handle(cf)
++	s.enableMouse(s.mouseEnabled)
++	s.setInMode(modeVtInput | modeResizeEn | modeExtendFlg)
++	s.setOutMode(modeVtOutput | modeNoAutoNL | modeCookedOut | modeUnderline)
++	if !s.disableAlt {
++		s.emitVtString(vtSaveTitle)
++		s.emitVtString(vtEnterCA)
++	}
++	s.emitVtString(vtDisableAm)
++	if s.title != "" {
++		s.emitVtString(fmt.Sprintf(vtSetTitle, s.title))
++	}
++
++	s.clearScreen(s.style)
++	s.hideCursor()
++
++	s.cells.Invalidate()
++	s.hideCursor()
++	s.resize()
++	s.draw()
++	s.doCursor()
++
++	s.wg.Add(1)
++	go s.scanInput(s.stopQ)
++	return nil
+ }
+ 
+ type cursorInfo struct {
+@@ -330,23 +397,22 @@ type rect struct {
+ 
+ func (s *cScreen) emitVtString(vs string) {
+ 	esc := utf16.Encode([]rune(vs))
+-	s.out_buffer = append(s.out_buffer, esc...)
++	_ = syscall.WriteConsole(s.out, &esc[0], uint32(len(esc)), nil, nil)
+ }
+ 
+ func (s *cScreen) showCursor() {
+-	if s.vten {
+-		s.emitVtString(vtShowCursor)
+-	} else {
+-		s.setCursorInfo(&cursorInfo{size: 100, visible: 1})
++	s.emitVtString(vtShowCursor)
++	s.emitVtString(vtCursorStyles[s.cursorStyle])
++	if s.cursorColor == ColorReset {
++		s.emitVtString(vtCursorColorReset)
++	} else if s.cursorColor.Valid() {
++		r, g, b := s.cursorColor.RGB()
++		s.emitVtString(fmt.Sprintf(vtCursorColorRGB, r, g, b))
+ 	}
+ }
+ 
+ func (s *cScreen) hideCursor() {
+-	if s.vten {
+-		s.emitVtString(vtHideCursor)
+-	} else {
+-		s.setCursorInfo(&cursorInfo{size: 1, visible: 0})
+-	}
++	s.emitVtString(vtHideCursor)
+ }
+ 
+ func (s *cScreen) ShowCursor(x, y int) {
+@@ -356,7 +422,18 @@ func (s *cScreen) ShowCursor(x, y int) {
+ 		s.cury = y
+ 	}
+ 	s.doCursor()
+-	s.flushOutBuffer()
++	s.Unlock()
++}
++
++func (s *cScreen) SetCursor(cs CursorStyle, cc Color) {
++	s.Lock()
++	if !s.fini {
++		if _, ok := vtCursorStyles[cs]; ok {
++			s.cursorStyle = cs
++			s.cursorColor = cc
++			s.doCursor()
++		}
++	}
+ 	s.Unlock()
+ }
+ 
+@@ -375,20 +452,6 @@ func (s *cScreen) HideCursor() {
+ 	s.ShowCursor(-1, -1)
+ }
+ 
+-type inputRecord struct {
+-	typ  uint16
+-	_    uint16
+-	data [16]byte
+-}
+-
+-const (
+-	keyEvent    uint16 = 1
+-	mouseEvent  uint16 = 2
+-	resizeEvent uint16 = 4
+-	menuEvent   uint16 = 8  // don't use
+-	focusEvent  uint16 = 16 // don't use
+-)
+-
+ type mouseRecord struct {
+ 	x     int16
+ 	y     int16
+@@ -397,11 +460,15 @@ type mouseRecord struct {
+ 	flags uint32
+ }
+ 
++type focusRecord struct {
++	focused int32 // actually BOOL
++}
++
+ const (
+-	mouseDoubleClick uint32 = 0x2
+-	mouseHWheeled    uint32 = 0x8
+-	mouseVWheeled    uint32 = 0x4
+-	mouseMoved       uint32 = 0x1
++	mouseHWheeled uint32 = 0x8
++	mouseVWheeled uint32 = 0x4
++	// mouseDoubleClick uint32 = 0x2
++	// mouseMoved       uint32 = 0x1
+ )
+ 
+ type resizeRecord struct {
+@@ -488,6 +555,8 @@ var vkKeys = map[uint16]Key{
+ 	vkInsert: KeyInsert,
+ 	vkDelete: KeyDelete,
+ 	vkHelp:   KeyHelp,
++	vkEscape: KeyEscape,
++	vkSpace:  ' ',
+ 	vkF1:     KeyF1,
+ 	vkF2:     KeyF2,
+ 	vkF3:     KeyF3,
+@@ -520,26 +589,34 @@ var vkKeys = map[uint16]Key{
+ func getu32(v []byte) uint32 {
+ 	return uint32(v[0]) + (uint32(v[1]) << 8) + (uint32(v[2]) << 16) + (uint32(v[3]) << 24)
+ }
++
+ func geti32(v []byte) int32 {
+ 	return int32(getu32(v))
+ }
++
+ func getu16(v []byte) uint16 {
+ 	return uint16(v[0]) + (uint16(v[1]) << 8)
+ }
++
+ func geti16(v []byte) int16 {
+ 	return int16(getu16(v))
+ }
+ 
+ // Convert windows dwControlKeyState to modifier mask
+-func mod2mask(cks uint32) ModMask {
++func mod2mask(cks uint32, filter_ctrl_alt bool) ModMask {
+ 	mm := ModNone
+ 	// Left or right control
+-	if (cks & (0x0008 | 0x0004)) != 0 {
+-		mm |= ModCtrl
+-	}
++	ctrl := (cks & (0x0008 | 0x0004)) != 0
+ 	// Left or right alt
+-	if (cks & (0x0002 | 0x0001)) != 0 {
+-		mm |= ModAlt
++	alt := (cks & (0x0002 | 0x0001)) != 0
++	// Filter out ctrl+alt (it means AltGr)
++	if !filter_ctrl_alt || !(ctrl && alt) {
++		if ctrl {
++			mm |= ModCtrl
++		}
++		if alt {
++			mm |= ModAlt
++		}
+ 	}
+ 	// Any shift
+ 	if (cks & 0x0010) != 0 {
+@@ -592,6 +669,13 @@ func mrec2btns(mbtns, flags uint32) ButtonMask {
+ 	return btns
+ }
+ 
++func (s *cScreen) postEvent(ev Event) {
++	select {
++	case s.eventQ <- ev:
++	case <-s.quit:
++	}
++}
++
+ func (s *cScreen) getConsoleInput() error {
+ 	// cancelFlag comes first as WaitForMultipleObjects returns the lowest index
+ 	// in the event that both events are signalled.
+@@ -634,19 +718,21 @@ func (s *cScreen) getConsoleInput() error {
+ 			krec.mod = getu32(rec.data[12:])
+ 
+ 			if krec.isdown == 0 || krec.repeat < 1 {
+-				// its a key release event, ignore it
++				// it's a key release event, ignore it
+ 				return nil
+ 			}
+ 			if krec.ch != 0 {
+ 				// synthesized key code
+ 				for krec.repeat > 0 {
++					if krec.ch < ' ' && mod2mask(krec.mod, false) == ModCtrl {
++						krec.ch += '\x60'
++					}
++
+ 					// convert shift+tab to backtab
+-					if mod2mask(krec.mod) == ModShift && krec.ch == vkTab {
+-						s.PostEventWait(NewEventKey(KeyBacktab, 0,
+-							ModNone, ""))
++					if mod2mask(krec.mod, false) == ModShift && krec.ch == vkTab {
++						s.postEvent(NewEventKey(KeyBacktab, 0, ModNone, ""))
+ 					} else {
+-						s.PostEventWait(NewEventKey(KeyRune, rune(krec.ch),
+-							mod2mask(krec.mod), ""))
++						s.postEvent(NewEventKey(KeyRune, rune(krec.ch), mod2mask(krec.mod, true), ""))
+ 					}
+ 					krec.repeat--
+ 				}
+@@ -658,8 +744,7 @@ func (s *cScreen) getConsoleInput() error {
+ 				return nil
+ 			}
+ 			for krec.repeat > 0 {
+-				s.PostEventWait(NewEventKey(key, rune(krec.ch),
+-					mod2mask(krec.mod), ""))
++				s.postEvent(NewEventKey(key, rune(krec.ch), mod2mask(krec.mod, false), ""))
+ 				krec.repeat--
+ 			}
+ 
+@@ -672,14 +757,23 @@ func (s *cScreen) getConsoleInput() error {
+ 			mrec.flags = getu32(rec.data[12:])
+ 			btns := mrec2btns(mrec.btns, mrec.flags)
+ 			// we ignore double click, events are delivered normally
+-			s.PostEventWait(NewEventMouse(int(mrec.x), int(mrec.y), btns,
+-				mod2mask(mrec.mod), ""))
++			s.postEvent(NewEventMouse(int(mrec.x), int(mrec.y), btns, mod2mask(mrec.mod, false), ""))
+ 
+ 		case resizeEvent:
+ 			var rrec resizeRecord
+ 			rrec.x = geti16(rec.data[0:])
+ 			rrec.y = geti16(rec.data[2:])
+-			s.PostEventWait(NewEventResize(int(rrec.x), int(rrec.y)))
++			s.postEvent(NewEventResize(int(rrec.x), int(rrec.y)))
++
++		case focusEvent:
++			var focus focusRecord
++			focus.focused = geti32(rec.data[0:])
++			s.Lock()
++			enabled := s.focusEnable
++			s.Unlock()
++			if enabled {
++				s.postEvent(NewEventFocus(focus.focused != 0))
++			}
+ 
+ 		default:
+ 		}
+@@ -690,21 +784,25 @@ func (s *cScreen) getConsoleInput() error {
+ 	return nil
+ }
+ 
+-func (s *cScreen) scanInput() {
++func (s *cScreen) scanInput(stopQ chan struct{}) {
++	defer s.wg.Done()
+ 	for {
++		select {
++		case <-stopQ:
++			return
++		default:
++		}
+ 		if e := s.getConsoleInput(); e != nil {
+-			close(s.scandone)
+ 			return
+ 		}
+ 	}
+ }
+ 
+-// Windows console can display 8 characters, in either low or high intensity
+ func (s *cScreen) Colors() int {
+-	if s.vten {
+-		return 1 << 24
++	if !s.truecolor {
++		return 16
+ 	}
+-	return 16
++	return 1 << 24
+ }
+ 
+ var vgaColors = map[Color]uint16{
+@@ -746,7 +844,7 @@ func mapColor2RGB(c Color) uint16 {
+ 
+ // Map a tcell style to Windows attributes
+ func (s *cScreen) mapStyle(style Style) uint16 {
+-	f, b, a := style.Decompose()
++	f, b, a := style.fg, style.bg, style.attrs
+ 	fa := s.oscreen.attrs & 0xf
+ 	ba := (s.oscreen.attrs) >> 4 & 0xf
+ 	if f != ColorDefault && f != ColorReset {
+@@ -761,10 +859,10 @@ func (s *cScreen) mapStyle(style Style) uint16 {
+ 	// views.
+ 	if a&AttrReverse != 0 {
+ 		attr = ba
+-		attr |= (fa << 4)
++		attr |= fa << 4
+ 	} else {
+ 		attr = fa
+-		attr |= (ba << 4)
++		attr |= ba << 4
+ 	}
+ 	if a&AttrBold != 0 {
+ 		attr |= 0x8
+@@ -780,99 +878,92 @@ func (s *cScreen) mapStyle(style Style) uint16 {
+ 	return attr
+ }
+ 
+-func (s *cScreen) SetCell(x, y int, style Style, ch ...rune) {
+-	if len(ch) > 0 {
+-		s.SetContent(x, y, ch[0], ch[1:], style)
+-	} else {
+-		s.SetContent(x, y, ' ', nil, style)
+-	}
+-}
+-
+-func (s *cScreen) SetContent(x, y int, mainc rune, combc []rune, style Style) {
+-	s.Lock()
+-	if !s.fini {
+-		s.cells.SetContent(x, y, mainc, combc, style)
+-	}
+-	s.Unlock()
+-}
+-
+-func (s *cScreen) GetContent(x, y int) (rune, []rune, Style, int) {
+-	s.Lock()
+-	mainc, combc, style, width := s.cells.GetContent(x, y)
+-	s.Unlock()
+-	return mainc, combc, style, width
+-}
+-
+-func (s *cScreen) sendVtStyle(style Style) {
++func (s *cScreen) makeVtStyle(style Style) string {
+ 	esc := &strings.Builder{}
+ 
+-	fg, bg, attrs := style.Decompose()
++	fg, bg, attrs := style.fg, style.bg, style.attrs
++	us, uc := style.ulStyle, style.ulColor
+ 
+ 	esc.WriteString(vtSgr0)
+-
+ 	if attrs&(AttrBold|AttrDim) == AttrBold {
+ 		esc.WriteString(vtBold)
+ 	}
+ 	if attrs&AttrBlink != 0 {
+ 		esc.WriteString(vtBlink)
+ 	}
+-	if attrs&AttrUnderline != 0 {
++	if us != UnderlineStyleNone {
++		if uc == ColorReset {
++			esc.WriteString(vtUnderColorReset)
++		} else if uc.IsRGB() {
++			r, g, b := uc.RGB()
++			_, _ = fmt.Fprintf(esc, vtUnderColorRGB, int(r), int(g), int(b))
++		} else if uc.Valid() {
++			_, _ = fmt.Fprintf(esc, vtUnderColor, uc&0xff)
++		}
++
+ 		esc.WriteString(vtUnderline)
++		// legacy ConHost does not understand these but Terminal does
++		switch us {
++		case UnderlineStyleSolid:
++		case UnderlineStyleDouble:
++			esc.WriteString(vtDoubleUnderline)
++		case UnderlineStyleCurly:
++			esc.WriteString(vtCurlyUnderline)
++		case UnderlineStyleDotted:
++			esc.WriteString(vtDottedUnderline)
++		case UnderlineStyleDashed:
++			esc.WriteString(vtDashedUnderline)
++		}
+ 	}
++
+ 	if attrs&AttrReverse != 0 {
+ 		esc.WriteString(vtReverse)
+ 	}
+ 	if fg.IsRGB() {
+ 		r, g, b := fg.RGB()
+-		fmt.Fprintf(esc, vtSetFgRGB, r, g, b)
++		_, _ = fmt.Fprintf(esc, vtSetFgRGB, r, g, b)
+ 	} else if fg.Valid() {
+-		fmt.Fprintf(esc, vtSetFg, fg&0xff)
++		_, _ = fmt.Fprintf(esc, vtSetFg, fg&0xff)
+ 	}
+ 	if bg.IsRGB() {
+ 		r, g, b := bg.RGB()
+-		fmt.Fprintf(esc, vtSetBgRGB, r, g, b)
++		_, _ = fmt.Fprintf(esc, vtSetBgRGB, r, g, b)
+ 	} else if bg.Valid() {
+-		fmt.Fprintf(esc, vtSetBg, bg&0xff)
++		_, _ = fmt.Fprintf(esc, vtSetBg, bg&0xff)
+ 	}
+-	s.emitVtString(esc.String())
++	// URL string can be long, so don't send it unless we really need to
++	if style.url != "" {
++		_, _ = fmt.Fprintf(esc, vtEnterUrl, style.urlId, style.url)
++	} else {
++		esc.WriteString(vtExitUrl)
++	}
++
++	return esc.String()
+ }
+ 
+-func (s *cScreen) writeString(x, y int, style Style, ch []uint16) {
++func (s *cScreen) sendVtStyle(style Style) {
++	s.emitVtString(s.makeVtStyle(style))
++}
++
++func (s *cScreen) writeString(x, y int, style Style, vtBuf, ch []uint16) {
+ 	// we assume the caller has hidden the cursor
+ 	if len(ch) == 0 {
+ 		return
+ 	}
+-	s.setCursorPos(x, y)
+ 
+-	if s.vten {
+-		s.sendVtStyle(style)
+-		s.out_buffer = append(s.out_buffer, ch...)
+-	} else {
+-		procSetConsoleTextAttribute.Call(
+-			uintptr(s.out),
+-			uintptr(s.mapStyle(style)))
+-		syscall.WriteConsole(s.out, &ch[0], uint32(len(ch)), nil, nil)
+-	}
+-}
+-
+-func (s *cScreen) flushOutBuffer() {
+-	if len(s.out_buffer) <= 0 {
+-		return
+-	}
+-
+-	syscall.WriteConsole(s.out, &s.out_buffer[0], uint32(len(s.out_buffer)), nil, nil)
+-	s.out_buffer = s.out_buffer[:0]
++	vtBuf = append(vtBuf, utf16.Encode([]rune(fmt.Sprintf(vtCursorPos, y+1, x+1)))...)
++	styleStr := s.makeVtStyle(style)
++	vtBuf = append(vtBuf, utf16.Encode([]rune(styleStr))...)
++	vtBuf = append(vtBuf, ch...)
++	_ = syscall.WriteConsole(s.out, &vtBuf[0], uint32(len(vtBuf)), nil, nil)
++	vtBuf = vtBuf[:0]
+ }
+ 
+ func (s *cScreen) draw() {
+ 	// allocate a scratch line bit enough for no combining chars.
+-	// if you have combining characters, you may pay for extra allocs.
+-	if s.clear {
+-		s.clearScreen(s.style)
+-		s.clear = false
+-		s.cells.Invalidate()
+-	}
++	// if you have combining characters, you may pay for extra allocations.
+ 	buf := make([]uint16, 0, s.w)
++	var vtBuf []uint16
+ 	wcs := buf[:]
+ 	lstyle := styleInvalid
+ 
+@@ -891,7 +982,7 @@ func (s *cScreen) draw() {
+ 				// write out any data queued thus far
+ 				// because we are going to skip over some
+ 				// cells, or because we need to change styles
+-				s.writeString(lx, ly, lstyle, wcs)
++				s.writeString(lx, ly, lstyle, vtBuf, wcs)
+ 				wcs = buf[0:0]
+ 				lstyle = StyleDefault
+ 				if !dirty {
+@@ -918,7 +1009,7 @@ func (s *cScreen) draw() {
+ 			}
+ 			x += width - 1
+ 		}
+-		s.writeString(lx, ly, lstyle, wcs)
++		s.writeString(lx, ly, lstyle, vtBuf, wcs)
+ 		wcs = buf[0:0]
+ 		lstyle = styleInvalid
+ 	}
+@@ -931,7 +1022,6 @@ func (s *cScreen) Show() {
+ 		s.resize()
+ 		s.draw()
+ 		s.doCursor()
+-		s.flushOutBuffer()
+ 	}
+ 	s.Unlock()
+ }
+@@ -944,7 +1034,6 @@ func (s *cScreen) Sync() {
+ 		s.resize()
+ 		s.draw()
+ 		s.doCursor()
+-		s.flushOutBuffer()
+ 	}
+ 	s.Unlock()
+ }
+@@ -958,37 +1047,30 @@ type consoleInfo struct {
+ }
+ 
+ func (s *cScreen) getConsoleInfo(info *consoleInfo) {
+-	procGetConsoleScreenBufferInfo.Call(
++	_, _, _ = procGetConsoleScreenBufferInfo.Call(
+ 		uintptr(s.out),
+ 		uintptr(unsafe.Pointer(info)))
+ }
+ 
+ func (s *cScreen) getCursorInfo(info *cursorInfo) {
+-	procGetConsoleCursorInfo.Call(
++	_, _, _ = procGetConsoleCursorInfo.Call(
+ 		uintptr(s.out),
+ 		uintptr(unsafe.Pointer(info)))
+ }
+ 
+ func (s *cScreen) setCursorInfo(info *cursorInfo) {
+-	procSetConsoleCursorInfo.Call(
++	_, _, _ = procSetConsoleCursorInfo.Call(
+ 		uintptr(s.out),
+ 		uintptr(unsafe.Pointer(info)))
+-
+ }
+ 
+ func (s *cScreen) setCursorPos(x, y int) {
+-	if s.vten {
+-		// Note that the string is Y first.  Origin is 1,1.
+-		s.emitVtString(fmt.Sprintf(vtCursorPos, y+1, x+1))
+-	} else {
+-		procSetConsoleCursorPosition.Call(
+-			uintptr(s.out),
+-			coord{int16(x), int16(y)}.uintptr())
+-	}
++	// Note that the string is Y first.  Origin is 1,1.
++	s.emitVtString(fmt.Sprintf(vtCursorPos, y+1, x+1))
+ }
+ 
+ func (s *cScreen) setBufferSize(x, y int) {
+-	procSetConsoleScreenBufferSize.Call(
++	_, _, _ = procSetConsoleScreenBufferSize.Call(
+ 		uintptr(s.out),
+ 		coord{int16(x), int16(y)}.uintptr())
+ }
+@@ -1001,6 +1083,37 @@ func (s *cScreen) Size() (int, int) {
+ 	return w, h
+ }
+ 
++func (s *cScreen) SetSize(w, h int) {
++	xy, _, _ := procGetLargestConsoleWindowSize.Call(uintptr(s.out))
++
++	// xy is little endian packed
++	y := int(xy >> 16)
++	x := int(xy & 0xffff)
++
++	if x == 0 || y == 0 {
++		return
++	}
++
++	// This is a hacky workaround for Windows Terminal.
++	// Essentially Windows Terminal (Windows 11) does not support application
++	// initiated resizing.  To detect this, we look for an extremely large size
++	// for the maximum width.  If it is > 500, then this is almost certainly
++	// Windows Terminal, and won't support this.  (Note that the legacy console
++	// does support application resizing.)
++	if x >= 500 {
++		return
++	}
++
++	s.setBufferSize(x, y)
++	r := rect{0, 0, int16(w - 1), int16(h - 1)}
++	_, _, _ = procSetConsoleWindowInfo.Call(
++		uintptr(s.out),
++		uintptr(1),
++		uintptr(unsafe.Pointer(&r)))
++
++	s.resize()
++}
++
+ func (s *cScreen) resize() {
+ 	info := consoleInfo{}
+ 	s.getConsoleInfo(&info)
+@@ -1019,100 +1132,62 @@ func (s *cScreen) resize() {
+ 	s.setBufferSize(w, h)
+ 
+ 	r := rect{0, 0, int16(w - 1), int16(h - 1)}
+-	procSetConsoleWindowInfo.Call(
++	_, _, _ = procSetConsoleWindowInfo.Call(
+ 		uintptr(s.out),
+ 		uintptr(1),
+ 		uintptr(unsafe.Pointer(&r)))
+-	s.PostEvent(NewEventResize(w, h))
+-}
+-
+-func (s *cScreen) Clear() {
+-	s.Fill(' ', s.style)
+-}
+-
+-func (s *cScreen) Fill(r rune, style Style) {
+-	s.Lock()
+-	if !s.fini {
+-		s.cells.Fill(r, style)
++	select {
++	case s.eventQ <- NewEventResize(w, h):
++	default:
+ 	}
+-	s.Unlock()
+ }
+ 
+ func (s *cScreen) clearScreen(style Style) {
+-	if s.vten {
+-		s.sendVtStyle(style)
+-		row := strings.Repeat(" ", s.w)
+-		for y := 0; y < s.h; y++ {
+-			s.setCursorPos(0, y)
+-			s.emitVtString(row)
+-		}
+-		s.setCursorPos(0, 0)
+-
+-	} else {
+-		pos := coord{0, 0}
+-		attr := s.mapStyle(style)
+-		x, y := s.w, s.h
+-		scratch := uint32(0)
+-		count := uint32(x * y)
+-
+-		procFillConsoleOutputAttribute.Call(
+-			uintptr(s.out),
+-			uintptr(attr),
+-			uintptr(count),
+-			pos.uintptr(),
+-			uintptr(unsafe.Pointer(&scratch)))
+-		procFillConsoleOutputCharacter.Call(
+-			uintptr(s.out),
+-			uintptr(' '),
+-			uintptr(count),
+-			pos.uintptr(),
+-			uintptr(unsafe.Pointer(&scratch)))
++	s.sendVtStyle(style)
++	row := strings.Repeat(" ", s.w)
++	for y := 0; y < s.h; y++ {
++		s.setCursorPos(0, y)
++		s.emitVtString(row)
+ 	}
++	s.setCursorPos(0, 0)
+ }
+ 
+ const (
+ 	// Input modes
+-	modeExtndFlg uint32 = 0x0080
+-	modeMouseEn         = 0x0010
+-	modeResizeEn        = 0x0008
+-	modeCooked          = 0x0001
+-	modeVtInput         = 0x0200
++	modeExtendFlg = uint32(0x0080)
++	modeMouseEn   = uint32(0x0010)
++	modeResizeEn  = uint32(0x0008)
++	modeVtInput   = uint32(0x0200)
++	// modeCooked    = uint32(0x0001)
+ 
+ 	// Output modes
+-	modeCookedOut uint32 = 0x0001
+-	modeWrapEOL          = 0x0002
+-	modeVtOutput         = 0x0004
+-	modeNoAutoNL         = 0x0008
++	modeCookedOut = uint32(0x0001)
++	modeVtOutput  = uint32(0x0004)
++	modeNoAutoNL  = uint32(0x0008)
++	modeUnderline = uint32(0x0010) // ENABLE_LVB_GRID_WORLDWIDE, needed for underlines
++	// modeWrapEOL   = uint32(0x0002)
+ )
+ 
+-func (s *cScreen) setInMode(mode uint32) error {
+-	rv, _, err := procSetConsoleMode.Call(
++func (s *cScreen) setInMode(mode uint32) {
++	_, _, _ = procSetConsoleMode.Call(
+ 		uintptr(s.in),
+ 		uintptr(mode))
+-	if rv == 0 {
+-		return err
+-	}
+-	return nil
+ }
+ 
+-func (s *cScreen) setOutMode(mode uint32) error {
+-	rv, _, err := procSetConsoleMode.Call(
++func (s *cScreen) setOutMode(mode uint32) {
++	_, _, _ = procSetConsoleMode.Call(
+ 		uintptr(s.out),
+ 		uintptr(mode))
+-	if rv == 0 {
+-		return err
+-	}
+-	return nil
+ }
+ 
+ func (s *cScreen) getInMode(v *uint32) {
+-	procGetConsoleMode.Call(
++	_, _, _ = procGetConsoleMode.Call(
+ 		uintptr(s.in),
+ 		uintptr(unsafe.Pointer(v)))
+ }
+ 
+ func (s *cScreen) getOutMode(v *uint32) {
+-	procGetConsoleMode.Call(
++	_, _, _ = procGetConsoleMode.Call(
+ 		uintptr(s.out),
+ 		uintptr(unsafe.Pointer(v)))
+ }
+@@ -1123,17 +1198,24 @@ func (s *cScreen) SetStyle(style Style) {
+ 	s.Unlock()
+ }
+ 
++func (s *cScreen) SetTitle(title string) {
++	s.Lock()
++	s.title = title
++	s.emitVtString(fmt.Sprintf(vtSetTitle, title))
++	s.Unlock()
++}
++
+ // No fallback rune support, since we have Unicode.  Yay!
+ 
+-func (s *cScreen) RegisterRuneFallback(r rune, subst string) {
++func (s *cScreen) RegisterRuneFallback(_ rune, _ string) {
+ }
+ 
+-func (s *cScreen) UnregisterRuneFallback(r rune) {
++func (s *cScreen) UnregisterRuneFallback(_ rune) {
+ }
+ 
+-func (s *cScreen) CanDisplay(r rune, checkFallbacks bool) bool {
++func (s *cScreen) CanDisplay(_ rune, _ bool) bool {
+ 	// We presume we can display anything -- we're Unicode.
+-	// (Sadly this not precisely true.  Combinings are especially
++	// (Sadly this not precisely true.  Combining characters are especially
+ 	// poorly supported under Windows.)
+ 	return true
+ }
+@@ -1142,58 +1224,20 @@ func (s *cScreen) HasMouse() bool {
+ 	return true
+ }
+ 
++func (s *cScreen) SetClipboard(_ []byte) {
++}
++
++func (s *cScreen) GetClipboard() {
++}
++
+ func (s *cScreen) Resize(int, int, int, int) {}
+ 
+-func (s *cScreen) HasKey(k Key) bool {
+-	// Microsoft has codes for some keys, but they are unusual,
+-	// so we don't include them.  We include all the typical
+-	// 101, 105 key layout keys.
+-	valid := map[Key]bool{
+-		KeyBackspace: true,
+-		KeyTab:       true,
+-		KeyEscape:    true,
+-		KeyPause:     true,
+-		KeyPrint:     true,
+-		KeyPgUp:      true,
+-		KeyPgDn:      true,
+-		KeyEnter:     true,
+-		KeyEnd:       true,
+-		KeyHome:      true,
+-		KeyLeft:      true,
+-		KeyUp:        true,
+-		KeyRight:     true,
+-		KeyDown:      true,
+-		KeyInsert:    true,
+-		KeyDelete:    true,
+-		KeyF1:        true,
+-		KeyF2:        true,
+-		KeyF3:        true,
+-		KeyF4:        true,
+-		KeyF5:        true,
+-		KeyF6:        true,
+-		KeyF7:        true,
+-		KeyF8:        true,
+-		KeyF9:        true,
+-		KeyF10:       true,
+-		KeyF11:       true,
+-		KeyF12:       true,
+-		KeyRune:      true,
+-	}
+-
+-	return valid[k]
++func (s *cScreen) HasKey(_ Key) bool {
++	return true
+ }
+ 
+ func (s *cScreen) RegisterRawSeq(string)   {}
+ func (s *cScreen) UnregisterRawSeq(string) {}
+-func (s *cScreen) SetPaste(bool)           {}
+-
+-func (s *cScreen) GetClipboard(string) error {
+-	return errors.New("Not supported on Windows")
+-}
+-
+-func (s *cScreen) SetClipboard(string, string) error {
+-	return errors.New("Not supported on Windows")
+-}
+ 
+ func (s *cScreen) Beep() error {
+ 	// A simple beep. If the sound card is not available, the sound is generated
+@@ -1207,3 +1251,28 @@ func (s *cScreen) Beep() error {
+ 	}
+ 	return nil
+ }
++
++func (s *cScreen) Suspend() error {
++	s.disengage()
++	return nil
++}
++
++func (s *cScreen) Resume() error {
++	return s.engage()
++}
++
++func (s *cScreen) Tty() (Tty, bool) {
++	return nil, false
++}
++
++func (s *cScreen) GetCells() *CellBuffer {
++	return &s.cells
++}
++
++func (s *cScreen) EventQ() chan Event {
++	return s.eventQ
++}
++
++func (s *cScreen) StopQ() <-chan struct{} {
++	return s.quit
++}
+diff --git i/doc.go w/doc.go
+index b671961..690dd27 100644
+--- i/doc.go
++++ w/doc.go
+@@ -36,13 +36,12 @@
+ //
+ // Note that support for non-UTF-8 locales (other than C)  must be enabled
+ // by the application using RegisterEncoding() -- we don't have them all
+-// enabled by default to avoid bloating the application unneccessarily.
++// enabled by default to avoid bloating the application unnecessarily.
+ // (These days UTF-8 is good enough for almost everyone, and nobody should
+ // be using legacy locales anymore.)  Also, actual glyphs for various code
+ // point will only be displayed if your terminal or emulator (or the font
+ // the emulator is using) supports them.
+ //
+-// A rich set of keycodes is supported, with support for up to 65 function
++// A rich set of key codes is supported, with support for up to 65 function
+ // keys, and various other special keys.
+-//
+ package tcell
+diff --git i/encoding.go w/encoding.go
+index 596a6e8..b7644c2 100644
+--- i/encoding.go
++++ w/encoding.go
+@@ -1,4 +1,4 @@
+-// Copyright 2015 The TCell Authors
++// Copyright 2022 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -38,19 +38,19 @@ var encodingFallback EncodingFallback = EncodingFallbackFail
+ // the common ones exist already as stock variables.  For example, ISO8859-15
+ // can be registered using the following code:
+ //
+-//   import "golang.org/x/text/encoding/charmap"
++//	import "golang.org/x/text/encoding/charmap"
+ //
+-//     ...
+-//     RegisterEncoding("ISO8859-15", charmap.ISO8859_15)
++//	  ...
++//	  RegisterEncoding("ISO8859-15", charmap.ISO8859_15)
+ //
+ // Aliases can be registered as well, for example "8859-15" could be an alias
+ // for "ISO8859-15".
+ //
+-// For POSIX systems, the tcell package will check the environment variables
++// For POSIX systems, this package will check the environment variables
+ // LC_ALL, LC_CTYPE,  and LANG (in that order) to determine the character set.
+ // These are expected to have the following pattern:
+ //
+-//	 $language[.$codeset[@$variant]
++//	$language[.$codeset[@$variant]
+ //
+ // We extract only the $codeset part, which will usually be something like
+ // UTF-8 or ISO8859-15 or KOI8-R.  Note that if the locale is either "POSIX"
+@@ -64,10 +64,11 @@ var encodingFallback EncodingFallback = EncodingFallbackFail
+ // quite a lot processing overhead.
+ //
+ // Note that some encodings are quite large (for example GB18030 which is a
+-// superset of Unicode) and so the application size can be expected ot
+-// increase quite a bit as each encoding is added.  The East Asian encodings
+-// have been seen to add 100-200K per encoding to the application size.
+-//
++// superset of Unicode) and so the application size can be expected to
++// increase quite a bit as each encoding is added.
++
++// The East Asian encodings have been seen to add 100-200K per encoding to the
++// size of the resulting binary.
+ func RegisterEncoding(charset string, enc encoding.Encoding) {
+ 	encodingLk.Lock()
+ 	charset = strings.ToLower(charset)
+@@ -75,7 +76,7 @@ func RegisterEncoding(charset string, enc encoding.Encoding) {
+ 	encodingLk.Unlock()
+ }
+ 
+-// EncodingFallback describes how the system behavees when the locale
++// EncodingFallback describes how the system behaves when the locale
+ // requires a character set that we do not support.  The system always
+ // supports UTF-8 and US-ASCII. On Windows consoles, UTF-16LE is also
+ // supported automatically.  Other character sets must be added using the
+@@ -88,7 +89,7 @@ const (
+ 	// when it cannot find an encoding.
+ 	EncodingFallbackFail = iota
+ 
+-	// EncodingFallbackASCII behaviore causes GetEncoding to fall back
++	// EncodingFallbackASCII behavior causes GetEncoding to fall back
+ 	// to a 7-bit ASCII encoding, if no other encoding can be found.
+ 	EncodingFallbackASCII
+ 
+diff --git i/errors.go w/errors.go
+index 666d8e4..fe05238 100644
+--- i/errors.go
++++ w/errors.go
+@@ -18,7 +18,7 @@ import (
+ 	"errors"
+ 	"time"
+ 
+-	"github.com/zyedidia/tcell/v2/terminfo"
++	"github.com/gdamore/tcell/v2/terminfo"
+ )
+ 
+ var (
+@@ -67,10 +67,7 @@ func (ev *EventError) Error() string {
+ 	return ev.err.Error()
+ }
+ 
+-func (ev *EventError) Err() error {
+-	return ev.err
+-}
+-
++// EscSeq returns the escape sequence.
+ func (ev *EventError) EscSeq() string {
+ 	return ev.err.Error()
+ }
+diff --git i/event_test.go w/event_test.go
+index f8ede20..93ff4d8 100644
+--- i/event_test.go
++++ w/event_test.go
+@@ -19,7 +19,7 @@ import (
+ 	"time"
+ )
+ 
+-func eventLoop(s SimulationScreen, evch chan Event) {
++func eventLoop(s Screen, evch chan Event) {
+ 	for {
+ 		ev := s.PollEvent()
+ 		if ev == nil {
+@@ -68,3 +68,42 @@ func TestMouseEvents(t *testing.T) {
+ 		t.Errorf("Modifiers should be control")
+ 	}
+ }
++
++func TestChannelMouseEvents(t *testing.T) {
++
++	s := mkTestScreen(t, "")
++	defer s.Fini()
++
++	s.EnableMouse()
++	s.InjectMouse(4, 9, Button1, ModCtrl)
++	evch := make(chan Event)
++	quit := make(chan struct{})
++	em := new(EventMouse)
++	go s.ChannelEvents(evch, quit)
++
++loop:
++	for {
++		select {
++		case ev := <-evch:
++			if evm, ok := ev.(*EventMouse); ok {
++				em = evm
++				close(quit)
++				break loop
++			}
++			continue
++		case <-time.After(time.Second):
++			close(quit)
++			break loop
++		}
++	}
++
++	if x, y := em.Position(); x != 4 || y != 9 {
++		t.Errorf("Mouse position wrong (%v, %v)", x, y)
++	}
++	if em.Buttons() != Button1 {
++		t.Errorf("Should be Button1")
++	}
++	if em.Modifiers() != ModCtrl {
++		t.Errorf("Modifiers should be control")
++	}
++}
+diff --git i/go.mod w/go.mod
+index 3b06906..93400fc 100644
+--- i/go.mod
++++ w/go.mod
+@@ -1,13 +1,28 @@
+ module github.com/zyedidia/tcell/v2
+ 
+ require (
+-	github.com/gdamore/encoding v1.0.0
+-	github.com/lucasb-eyer/go-colorful v1.0.3
++	github.com/gdamore/encoding v1.0.1
++	github.com/lucasb-eyer/go-colorful v1.3.0
+ 	github.com/mattn/go-runewidth v0.0.7
+ 	github.com/xo/terminfo v0.0.0-20200218205459-454e5b68f9e8
+ 	github.com/zyedidia/poller v1.0.1
+-	golang.org/x/sys v0.0.0-20190626150813-e07cf5db2756
+-	golang.org/x/text v0.3.0
++	golang.org/x/sys v0.38.0
++	golang.org/x/text v0.31.0
+ )
+ 
+-go 1.13
++require (
++	github.com/gdamore/tcell/v2 v2.11.0 // indirect
++	github.com/google/go-cmp v0.6.0 // indirect
++	github.com/rivo/uniseg v0.4.7 // indirect
++	github.com/yuin/goldmark v1.4.13 // indirect
++	golang.org/x/crypto v0.43.0 // indirect
++	golang.org/x/mod v0.29.0 // indirect
++	golang.org/x/net v0.46.0 // indirect
++	golang.org/x/sync v0.18.0 // indirect
++	golang.org/x/telemetry v0.0.0-20251008203120-078029d740a8 // indirect
++	golang.org/x/term v0.37.0 // indirect
++	golang.org/x/tools v0.38.0 // indirect
++	golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7 // indirect
++)
++
++go 1.24.0
+diff --git i/go.sum w/go.sum
+index bdc40ef..5a9ecd3 100644
+--- i/go.sum
++++ w/go.sum
+@@ -1,14 +1,59 @@
+ github.com/gdamore/encoding v1.0.0 h1:+7OoQ1Bc6eTm5niUzBa0Ctsh6JbMW6Ra+YNuAtDBdko=
+ github.com/gdamore/encoding v1.0.0/go.mod h1:alR0ol34c49FCSBLjhosxzcPHQbf2trDkoo5dl+VrEg=
++github.com/gdamore/encoding v1.0.1/go.mod h1:0Z0cMFinngz9kS1QfMjCP8TY7em3bZYeeklsSDPivEo=
++github.com/gdamore/tcell/v2 v2.11.0 h1:ntVCx4v2M7ev2hMuAHad5ZRPymfpxb8VR3X3VRz+/YQ=
++github.com/gdamore/tcell/v2 v2.11.0/go.mod h1:pytyB+bE6zrRVf6u/ZMWX9AZqSVcW4bpimuDiR5k2mU=
++github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
+ github.com/lucasb-eyer/go-colorful v1.0.3 h1:QIbQXiugsb+q10B+MI+7DI1oQLdmnep86tWFlaaUAac=
+ github.com/lucasb-eyer/go-colorful v1.0.3/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
++github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
+ github.com/mattn/go-runewidth v0.0.7 h1:Ei8KR0497xHyKJPAv59M1dkC+rOZCMBJ+t3fZ+twI54=
+ github.com/mattn/go-runewidth v0.0.7/go.mod h1:H031xJmbD/WCDINGzjvQ9THkh0rPKHF+m2gUSrubnMI=
++github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
+ github.com/xo/terminfo v0.0.0-20200218205459-454e5b68f9e8 h1:woqigIZtZUZxws1zZA99nAvuz2mQrxtWsuZSR9c8I/A=
+ github.com/xo/terminfo v0.0.0-20200218205459-454e5b68f9e8/go.mod h1:6Yhx5ZJl5942QrNRWLwITArVT9okUXc5c3brgWJMoDc=
++github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
+ github.com/zyedidia/poller v1.0.1 h1:Tt9S3AxAjXwWGNiC2TUdRJkQDZSzCBNVQ4xXiQ7440s=
+ github.com/zyedidia/poller v1.0.1/go.mod h1:vZXJOHGDcuK08GXhF6IAY0ZFd2WcgOR5DOTp84Uk5eE=
++golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
++golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=
++golang.org/x/crypto v0.43.0/go.mod h1:BFbav4mRNlXJL4wNeejLpWxB7wMbc79PdRGhWKncxR0=
++golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4=
++golang.org/x/mod v0.8.0/go.mod h1:iBbtSCu2XBx23ZKBPSOrRkjjQPZFPuis4dIYUhu/chs=
++golang.org/x/mod v0.29.0/go.mod h1:NyhrlYXJ2H4eJiRy/WDBO6HMqZQ6q9nk4JzS3NuCK+w=
++golang.org/x/net v0.0.0-20190620200207-3b0461eec859/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
++golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v0D8zg8gWTRqZa9RBIspLL5mdg=
++golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug+ECip1KBveYUHfp+8e9klMJ9c=
++golang.org/x/net v0.6.0/go.mod h1:2Tu9+aMcznHK/AK1HMvgo6xiTLG5rD5rZLDS+rp2Bjs=
++golang.org/x/net v0.46.0/go.mod h1:Q9BGdFy1y4nkUwiLvT5qtyhAnEHgnQ/zd8PfU6nc210=
++golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
++golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
++golang.org/x/sync v0.1.0/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
++golang.org/x/sync v0.18.0/go.mod h1:9KTHXmSnoGruLpwFjVSX0lNNA75CykiMECbovNTZqGI=
++golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20190626150813-e07cf5db2756 h1:9nuHUbU8dRnRRfj9KjWUVrJeoexdbeMjttk6Oh1rD10=
+ golang.org/x/sys v0.0.0-20190626150813-e07cf5db2756/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
++golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
++golang.org/x/sys v0.0.0-20210615035016-665e8c7367d1/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.5.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
++golang.org/x/telemetry v0.0.0-20251008203120-078029d740a8/go.mod h1:Pi4ztBfryZoJEkyFTI5/Ocsu2jXyDr6iSdgJiYE/uwE=
++golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
++golang.org/x/term v0.0.0-20210927222741-03fcf44c2211/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=
++golang.org/x/term v0.5.0/go.mod h1:jMB1sMXY+tzblOD4FWmEbocvup2/aLOaQEp7JmGp78k=
++golang.org/x/term v0.37.0/go.mod h1:5pB4lxRNYYVZuTLmy8oR2BH8dflOR+IbTYFD8fi3254=
+ golang.org/x/text v0.3.0 h1:g61tztE5qeGQ89tm6NTjjM9VPIm088od1l6aSorWRWg=
+ golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
++golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
++golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
++golang.org/x/text v0.7.0/go.mod h1:mrYo+phRRbMaCq/xk9113O4dZlRixOauAjOtrjsXDZ8=
++golang.org/x/text v0.14.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=
++golang.org/x/text v0.31.0/go.mod h1:tKRAlv61yKIjGGHX/4tP1LTbc13YSec1pxVEWXzfoeM=
++golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
++golang.org/x/tools v0.0.0-20191119224855-298f0cb1881e/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=
++golang.org/x/tools v0.1.12/go.mod h1:hNGJHUnrk76NpqgfD5Aqm5Crs+Hm0VOH/i9J2+nxYbc=
++golang.org/x/tools v0.6.0/go.mod h1:Xwgl3UAJ/d3gWutnCtw505GrjyAbvKui8lOU390QaIU=
++golang.org/x/tools v0.38.0/go.mod h1:yEsQ/d/YK8cjh0L6rZlY8tgtlKiBNTL14pGDJPJpYQs=
++golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+diff --git i/key.go w/key.go
+index 0dde010..127f85b 100644
+--- i/key.go
++++ w/key.go
+@@ -1,4 +1,4 @@
+-// Copyright 2016 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -46,8 +46,8 @@ type EventKey struct {
+ 	t   time.Time
+ 	mod ModMask
+ 	key Key
+-	esc string
+ 	ch  rune
++	esc string
+ }
+ 
+ // When returns the time when this Event was created, which should closely
+@@ -56,6 +56,11 @@ func (ev *EventKey) When() time.Time {
+ 	return ev.t
+ }
+ 
++// EscSeq returns the escape sequence if any that was used to encode the key.
++func (ev *EventKey) EscSeq() string {
++	return ev.esc
++}
++
+ // Rune returns the rune corresponding to the key press, if it makes sense.
+ // The result is only defined if the value of Key() is KeyRune.
+ func (ev *EventKey) Rune() rune {
+@@ -172,6 +177,11 @@ var KeyNames = map[Key]string{
+ 	KeyF62:            "F62",
+ 	KeyF63:            "F63",
+ 	KeyF64:            "F64",
++	KeyMenu:           "Menu",
++	KeyCapsLock:       "CapsLock",
++	KeyScrollLock:     "ScrollLock",
++	KeyNumLock:        "NumLock",
++	KeyCtrlSpace:      "Ctrl-Space",
+ 	KeyCtrlA:          "Ctrl-A",
+ 	KeyCtrlB:          "Ctrl-B",
+ 	KeyCtrlC:          "Ctrl-C",
+@@ -179,9 +189,12 @@ var KeyNames = map[Key]string{
+ 	KeyCtrlE:          "Ctrl-E",
+ 	KeyCtrlF:          "Ctrl-F",
+ 	KeyCtrlG:          "Ctrl-G",
++	KeyCtrlH:          "Ctrl-H",
++	KeyCtrlI:          "Ctrl-I",
+ 	KeyCtrlJ:          "Ctrl-J",
+ 	KeyCtrlK:          "Ctrl-K",
+ 	KeyCtrlL:          "Ctrl-L",
++	KeyCtrlM:          "Ctrl-M",
+ 	KeyCtrlN:          "Ctrl-N",
+ 	KeyCtrlO:          "Ctrl-O",
+ 	KeyCtrlP:          "Ctrl-P",
+@@ -195,11 +208,11 @@ var KeyNames = map[Key]string{
+ 	KeyCtrlX:          "Ctrl-X",
+ 	KeyCtrlY:          "Ctrl-Y",
+ 	KeyCtrlZ:          "Ctrl-Z",
+-	KeyCtrlSpace:      "Ctrl-Space",
+-	KeyCtrlUnderscore: "Ctrl-_",
+-	KeyCtrlRightSq:    "Ctrl-]",
++	KeyCtrlLeftSq:     "Ctrl-[",
++	KeyCtrlRightSq:    "Ctrl-[",
+ 	KeyCtrlBackslash:  "Ctrl-\\",
+ 	KeyCtrlCarat:      "Ctrl-^",
++	KeyCtrlUnderscore: "Ctrl-_",
+ }
+ 
+ // Name returns a printable value or the key stroke.  This can be used
+@@ -219,6 +232,9 @@ func (ev *EventKey) Name() string {
+ 	if ev.mod&ModCtrl != 0 {
+ 		m = append(m, "Ctrl")
+ 	}
++	if ev.mod&ModHyper != 0 {
++		m = append(m, "Hyper")
++	}
+ 
+ 	ok := false
+ 	if s, ok = KeyNames[ev.key]; !ok {
+@@ -237,10 +253,6 @@ func (ev *EventKey) Name() string {
+ 	return s
+ }
+ 
+-func (ev *EventKey) EscSeq() string {
+-	return ev.esc
+-}
+-
+ // NewEventKey attempts to create a suitable event.  It parses the various
+ // ASCII control sequences if KeyRune is passed for Key, but if the caller
+ // has more precise information it should set that specifically.  Callers
+@@ -251,15 +263,38 @@ func NewEventKey(k Key, ch rune, mod ModMask, esc string) *EventKey {
+ 		// control characters and the DEL.
+ 		k = Key(ch)
+ 		if mod == ModNone && ch < ' ' {
+-			switch Key(ch) {
++			switch k {
+ 			case KeyBackspace, KeyTab, KeyEsc, KeyEnter:
+ 				// these keys are directly typeable without CTRL
+ 			default:
+ 				// most likely entered with a CTRL keypress
+ 				mod = ModCtrl
++				ch = ch + '\x60'
+ 			}
+ 		}
+ 	}
++	if k == KeyRune && ch >= '@' && ch <= '_' && mod == ModCtrl {
++		// We don't do Ctrl-[ or backslash or those specially.
++		k = KeyCtrlA + Key(ch-'@')
++	}
++
++	// Might be lower case
++	if k == KeyRune && ch >= 'a' && ch <= 'z' && mod == ModCtrl {
++		// We don't do Ctrl-[ or backslash or those specially.
++		k = KeyCtrlA + Key(ch-'a')
++	}
++
++	// Windows reports ModShift for shifted keys.  This is inconsistent
++	// with UNIX, lets harmonize this.
++	if k == KeyRune && mod == ModShift && ch != 0 {
++		mod = ModNone
++	}
++
++	// Backspace2 is just another name for backspace.
++	if k == KeyBackspace2 {
++		k = KeyBackspace
++	}
++
+ 	return &EventKey{t: time.Now(), key: k, ch: ch, mod: mod, esc: esc}
+ }
+ 
+@@ -277,6 +312,7 @@ const (
+ 	ModCtrl
+ 	ModAlt
+ 	ModMeta
++	ModHyper
+ 	ModNone ModMask = 0
+ )
+ 
+@@ -378,12 +414,24 @@ const (
+ 	KeyF62
+ 	KeyF63
+ 	KeyF64
++	KeyMenu
++	KeyCapsLock
++	KeyScrollLock
++	KeyNumLock
+ )
+ 
+-// These are the control keys.  Note that they overlap with other keys,
+-// perhaps.  For example, KeyCtrlH is the same as KeyBackspace.
+ const (
+-	KeyCtrlSpace Key = iota
++	// These key codes are used internally, and will never appear to applications.
++	keyPasteStart Key = iota + 16384
++	keyPasteEnd
++)
++
++// These are the control keys, they will also be reported with the
++// rune (lower case) and control modifier.  If the shift key
++// or other modifiers are present then these will *NOT* be reported,
++// but reported instead as KeyRune.
++const (
++	KeyCtrlSpace Key = iota + 64
+ 	KeyCtrlA
+ 	KeyCtrlB
+ 	KeyCtrlC
+@@ -460,10 +508,12 @@ const (
+ 
+ // These keys are aliases for other names.
+ const (
+-	KeyBackspace  = KeyBS
+-	KeyTab        = KeyTAB
+-	KeyEsc        = KeyESC
+-	KeyEscape     = KeyESC
+-	KeyEnter      = KeyCR
++	KeyBackspace = KeyBS
++	KeyTab       = KeyTAB
++	KeyEsc       = KeyESC
++	KeyEscape    = KeyESC
++	KeyEnter     = KeyCR
++
++	// NB: This key will be translated to KeyBackspace
+ 	KeyBackspace2 = KeyDEL
+ )
+diff --git i/mouse.go w/mouse.go
+index e423058..3dfb815 100644
+--- i/mouse.go
++++ w/mouse.go
+@@ -1,4 +1,4 @@
+-// Copyright 2020 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -48,6 +48,12 @@ func (ev *EventMouse) When() time.Time {
+ 	return ev.t
+ }
+ 
++// EscSeq returns the escape sequence if any that was used to encode the mouse
++// event.
++func (ev *EventMouse) EscSeq() string {
++	return ev.esc
++}
++
+ // Buttons returns the list of buttons that were pressed or wheel motions.
+ func (ev *EventMouse) Buttons() ButtonMask {
+ 	return ev.btn
+@@ -65,10 +71,6 @@ func (ev *EventMouse) Position() (int, int) {
+ 	return ev.x, ev.y
+ }
+ 
+-func (ev *EventMouse) EscSeq() string {
+-	return ev.esc
+-}
+-
+ // NewEventMouse is used to create a new mouse event.  Applications
+ // shouldn't need to use this; its mostly for screen implementors.
+ func NewEventMouse(x, y int, btn ButtonMask, mod ModMask, esc string) *EventMouse {
+diff --git i/paste.go w/paste.go
+index 6d559d4..806244c 100644
+--- i/paste.go
++++ w/paste.go
+@@ -1,4 +1,4 @@
+-// Copyright 2016 The TCell Authors
++// Copyright 2024 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -14,35 +14,74 @@
+ 
+ package tcell
+ 
+-import "time"
++import (
++	"time"
++)
+ 
+-// EventPaste represents a bracketed paste event.
++// EventPaste is used to mark the start and end of a bracketed paste.
++//
++// An event with .Start() true will be sent to mark the start of a bracketed paste,
++// followed by a number of keys (string data) for the content, ending with the
++// an event with .End() true.
+ type EventPaste struct {
++	start bool
++	t     time.Time
++	data  []byte
++}
++
++// When returns the time when this EventPaste was created.
++func (ev *EventPaste) When() time.Time {
++	return ev.t
++}
++
++// EscSeq returns the escape sequence for the event.
++func (ev *EventPaste) EscSeq() string {
++	return ""
++}
++
++// Text returns the text for the event.
++func (ev *EventPaste) Text() string {
++	return ""
++}
++
++// Start returns true if this is the start of a paste.
++func (ev *EventPaste) Start() bool {
++	return ev.start
++}
++
++// End returns true if this is the end of a paste.
++func (ev *EventPaste) End() bool {
++	return !ev.start
++}
++
++// NewEventPaste returns a new EventPaste.
++func NewEventPaste(start bool) *EventPaste {
++	return &EventPaste{t: time.Now(), start: start}
++}
++
++// NewEventClipboard returns a new NewEventClipboard with a data payload
++func NewEventClipboard(data []byte) *EventClipboard {
++	return &EventClipboard{t: time.Now(), data: data}
++}
++
++// EventClipboard represents data from the clipboard,
++// in response to a GetClipboard request.
++type EventClipboard struct {
+ 	t    time.Time
+-	text string
+-	esc  string
++	data []byte
+ }
+ 
+-// When returns the time when this Event was created, which should closely
+-// match the time when the paste was made.
+-func (e *EventPaste) When() time.Time {
+-	return e.t
++// Data returns the attached binary data.
++func (ev *EventClipboard) Data() []byte {
++	return ev.data
+ }
+ 
+-// Text returns the text that was pasted
+-func (e *EventPaste) Text() string {
+-	return e.text
++// When returns the time when this event was created.
++func (ev *EventClipboard) When() time.Time {
++	return ev.t
+ }
+ 
+-func (e *EventPaste) EscSeq() string {
+-	return e.esc
+-}
+-
+-// NewEventPaste creates a new paste event from the given text
+-func NewEventPaste(text string, esc string) *EventPaste {
+-	return &EventPaste{
+-		t:    time.Now(),
+-		text: text,
+-		esc:  esc,
+-	}
++// EscSeq returns the escape sequence for the event.
++func (ev *EventClipboard) EscSeq() string {
++	return ""
+ }
+diff --git i/resize.go w/resize.go
+index 7f9b704..c8ac1d3 100644
+--- i/resize.go
++++ w/resize.go
+@@ -20,15 +20,18 @@ import (
+ 
+ // EventResize is sent when the window size changes.
+ type EventResize struct {
+-	t time.Time
+-	w int
+-	h int
++	t  time.Time
++	ws WindowSize
+ }
+ 
+ // NewEventResize creates an EventResize with the new updated window size,
+ // which is given in character cells.
+ func NewEventResize(width, height int) *EventResize {
+-	return &EventResize{t: time.Now(), w: width, h: height}
++	ws := WindowSize{
++		Width:  width,
++		Height: height,
++	}
++	return &EventResize{t: time.Now(), ws: ws}
+ }
+ 
+ // When returns the time when the Event was created.
+@@ -38,9 +41,30 @@ func (ev *EventResize) When() time.Time {
+ 
+ // Size returns the new window size as width, height in character cells.
+ func (ev *EventResize) Size() (int, int) {
+-	return ev.w, ev.h
++	return ev.ws.Width, ev.ws.Height
++}
++
++// PixelSize returns the new window size as width, height in pixels. The size
++// will be 0,0 if the screen doesn't support this feature
++func (ev *EventResize) PixelSize() (int, int) {
++	return ev.ws.PixelWidth, ev.ws.PixelHeight
+ }
+ 
+ func (ev *EventResize) EscSeq() string {
+ 	return ""
+ }
++
++type WindowSize struct {
++	Width       int
++	Height      int
++	PixelWidth  int
++	PixelHeight int
++}
++
++// CellDimensions returns the dimensions of a single cell, in pixels
++func (ws WindowSize) CellDimensions() (int, int) {
++	if ws.PixelWidth == 0 || ws.PixelHeight == 0 {
++		return 0, 0
++	}
++	return (ws.PixelWidth / ws.Width), (ws.PixelHeight / ws.Height)
++}
+diff --git i/screen.go w/screen.go
+index d4f8469..8d98300 100644
+--- i/screen.go
++++ w/screen.go
+@@ -1,4 +1,4 @@
+-// Copyright 2019 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -14,9 +14,11 @@
+ 
+ package tcell
+ 
++import "sync"
++
+ // Screen represents the physical (or emulated) screen.
+ // This can be a terminal window or a physical console.  Platforms implement
+-// this differerently.
++// this differently.
+ type Screen interface {
+ 	// Init initializes the screen for use.
+ 	Init() error
+@@ -24,26 +26,47 @@ type Screen interface {
+ 	// Fini finalizes the screen also releasing resources.
+ 	Fini()
+ 
+-	// Clear erases the screen.  The contents of any screen buffers
+-	// will also be cleared.  This has the logical effect of
+-	// filling the screen with spaces, using the global default style.
++	// Clear logically erases the screen.
++	// This is effectively a short-cut for Fill(' ', StyleDefault).
+ 	Clear()
+ 
+ 	// Fill fills the screen with the given character and style.
++	// The effect of filling the screen is not visible until Show
++	// is called (or Sync).
+ 	Fill(rune, Style)
+ 
+-	// SetCell is an older API, and will be removed.  Please use
+-	// SetContent instead; SetCell is implemented in terms of SetContent.
++	// Put writes the first graphme of the given string with th
++	// given style at the given coordinates. (Only the first grapheme
++	// occupying either one or two cells is stored.) It returns the
++	// remainder of the string, and the width displayed.
++	Put(x int, y int, str string, style Style) (string, int)
++
++	// PutStr writes a string starting at the given position, using the
++	// default style. The content is clipped to the screen dimensions.
++	PutStr(x int, y int, str string)
++
++	// PutStrStyled writes a string starting at the given position, using
++	// the given style. The cont4ent is clipped to the screen dimensions.
++	PutStrStyled(x int, y int, str string, style Style)
++
++	// SetCell is an older API, and will be removed.
++	//jj
++	// Deprecated: Please use Put instead.
+ 	SetCell(x int, y int, style Style, ch ...rune)
+ 
+-	// GetContent returns the contents at the given location.  If the
++	// Get the contents at the given location.  If the
+ 	// coordinates are out of range, then the values will be 0, nil,
+ 	// StyleDefault.  Note that the contents returned are logical contents
+ 	// and may not actually be what is displayed, but rather are what will
+ 	// be displayed if Show() or Sync() is called.  The width is the width
+ 	// in screen cells; most often this will be 1, but some East Asian
+-	// characters require two cells.
+-	GetContent(x, y int) (mainc rune, combc []rune, style Style, width int)
++	// characters and emoji require two cells.
++	Get(x, y int) (str string, style Style, width int)
++
++	// GetContent is the old way to get cell contents.
++	//
++	// Deprecated: Use Get() instead.
++	GetContent(x, y int) (primary rune, combining []rune, style Style, width int)
+ 
+ 	// SetContent sets the contents of the given cell location.  If
+ 	// the coordinates are out of range, then the operation is ignored.
+@@ -52,13 +75,13 @@ type Screen interface {
+ 	// that follows is a possible list of combining characters to append,
+ 	// and will usually be nil (no combining characters.)
+ 	//
+-	// The results are not displayd until Show() or Sync() is called.
++	// The results are not displayed until Show() or Sync() is called.
+ 	//
+-	// Note that wide (East Asian full width) runes occupy two cells,
++	// Note that wide (East Asian full width and emoji) runes occupy two cells,
+ 	// and attempts to place character at next cell to the right will have
+ 	// undefined effects.  Wide runes that are printed in the
+ 	// last column will be replaced with a single width space on output.
+-	SetContent(x int, y int, mainc rune, combc []rune, style Style)
++	SetContent(x int, y int, primary rune, combining []rune, style Style)
+ 
+ 	// SetStyle sets the default style to use when clearing the screen
+ 	// or when StyleDefault is specified.  If it is also StyleDefault,
+@@ -70,24 +93,51 @@ type Screen interface {
+ 	// dimensions of the screen, the cursor will be hidden.
+ 	ShowCursor(x int, y int)
+ 
+-	// HideCursor is used to hide the cursor.  Its an alias for
+-	// ShowCursor(-1, -1).
++	// HideCursor is used to hide the cursor.  It's an alias for
++	// ShowCursor(-1, -1).sim
+ 	HideCursor()
+ 
++	// SetCursorStyle is used to set the cursor style.  If the style
++	// is not supported (or cursor styles are not supported at all),
++	// then this will have no effect.  Color will be changed if supplied,
++	// and the terminal supports doing so.
++	SetCursorStyle(CursorStyle, ...Color)
++
+ 	// Size returns the screen size as width, height.  This changes in
+ 	// response to a call to Clear or Flush.
+-	Size() (int, int)
++	Size() (width, height int)
++
++	// ChannelEvents is an infinite loop that waits for an event and
++	// channels it into the user provided channel ch.  Closing the
++	// quit channel and calling the Fini method are cancellation
++	// signals.  When a cancellation signal is received the method
++	// returns after closing ch.
++	//
++	// This method should be used as a goroutine.
++	//
++	// NOTE: PollEvent should not be called while this method is running.
++	ChannelEvents(ch chan<- Event, quit <-chan struct{})
+ 
+ 	// PollEvent waits for events to arrive.  Main application loops
+ 	// must spin on this to prevent the application from stalling.
+ 	// Furthermore, this will return nil if the Screen is finalized.
+ 	PollEvent() Event
+ 
++	// HasPendingEvent returns true if PollEvent would return an event
++	// without blocking.  If the screen is stopped and PollEvent would
++	// return nil, then the return value from this function is unspecified.
++	// The purpose of this function is to allow multiple events to be collected
++	// at once, to minimize screen redraws.
++	HasPendingEvent() bool
++
+ 	// PostEvent tries to post an event into the event stream.  This
+ 	// can fail if the event queue is full.  In that case, the event
+ 	// is dropped, and ErrEventQFull is returned.
+ 	PostEvent(ev Event) error
+ 
++	// Deprecated: PostEventWait is unsafe, and will be removed
++	// in the future.
++	//
+ 	// PostEventWait is like PostEvent, but if the queue is full, it
+ 	// blocks until there is space in the queue, making delivery
+ 	// reliable.  However, it is VERY important that this function
+@@ -99,13 +149,30 @@ type Screen interface {
+ 	PostEventWait(ev Event)
+ 
+ 	// EnableMouse enables the mouse.  (If your terminal supports it.)
+-	EnableMouse()
++	// If no flags are specified, then all events are reported, if the
++	// terminal supports them.
++	EnableMouse(...MouseFlags)
+ 
+ 	// DisableMouse disables the mouse.
+ 	DisableMouse()
+ 
++	// EnablePaste enables bracketed paste mode, if supported.
++	EnablePaste()
++
++	// DisablePaste disables bracketed paste mode.
++	DisablePaste()
++
++	// SetPaste sets the bracketed paste mode.
++	SetPaste(enable bool)
++
++	// EnableFocus enables reporting of focus events, if your terminal supports it.
++	EnableFocus()
++
++	// DisableFocus disables reporting of focus events.
++	DisableFocus()
++
+ 	// HasMouse returns true if the terminal (apparently) supports a
+-	// mouse.  Note that the a return value of true doesn't guarantee that
++	// mouse.  Note that the return value of true doesn't guarantee that
+ 	// a mouse/pointing device is present; a false return definitely
+ 	// indicates no mouse support is available.
+ 	HasMouse() bool
+@@ -127,8 +194,8 @@ type Screen interface {
+ 	// internal model.  This may be both expensive and visually jarring,
+ 	// so it should only be used when believed to actually be necessary.
+ 	//
+-	// Typically this is called as a result of a user-requested redraw
+-	// (e.g. to clear up on screen corruption caused by some other program),
++	// Typically, this is called as a result of a user-requested redraw
++	// (e.g. to clear up on-screen corruption caused by some other program),
+ 	// or during a resize event.
+ 	Sync()
+ 
+@@ -140,18 +207,18 @@ type Screen interface {
+ 	CharacterSet() string
+ 
+ 	// RegisterRuneFallback adds a fallback for runes that are not
+-	// part of the character set -- for example one coudld register
++	// part of the character set -- for example one could register
+ 	// o as a fallback for ø.  This should be done cautiously for
+ 	// characters that might be displayed ordinarily in language
+ 	// specific text -- characters that could change the meaning of
+-	// of written text would be dangerous.  The intention here is to
++	// written text would be dangerous.  The intention here is to
+ 	// facilitate fallback characters in pseudo-graphical applications.
+ 	//
+ 	// If the terminal has fallbacks already in place via an alternate
+ 	// character set, those are used in preference.  Also, standard
+-	// fallbacks for graphical characters in the ACSC terminfo string
+-	// are registered implicitly.
+-
++	// fallbacks for graphical characters in the alternate character set
++	// terminfo string are registered implicitly.
++	//
+ 	// The display string should be the same width as original rune.
+ 	// This makes it possible to register two character replacements
+ 	// for full width East Asian characters, for example.
+@@ -169,7 +236,7 @@ type Screen interface {
+ 	UnregisterRuneFallback(r rune)
+ 
+ 	// CanDisplay returns true if the given rune can be displayed on
+-	// this screen.  Note that this is a best guess effort -- whether
++	// this screen.  Note that this is a best-guess effort -- whether
+ 	// your fonts support the character or not may be questionable.
+ 	// Mostly this is for folks who work outside of Unicode.
+ 	//
+@@ -177,62 +244,317 @@ type Screen interface {
+ 	// fallbacks are registered, this will return true.  This will
+ 	// also return true if the terminal can replace the glyph with
+ 	// one that is visually indistinguishable from the one requested.
++	//
++	// Deprecated: This is not a particularly useful or reliable function,
++	// due to limitations in fonts, etc.  It will be removed in the future.
+ 	CanDisplay(r rune, checkFallbacks bool) bool
+ 
+-	// Resize does nothing, since its generally not possible to
++	// Resize does nothing, since it's generally not possible to
+ 	// ask a screen to resize, but it allows the Screen to implement
+ 	// the View interface.
+ 	Resize(int, int, int, int)
+ 
+-	// HasKey returns true if the keyboard is believed to have the
+-	// key.  In some cases a keyboard may have keys with this name
+-	// but no support for them, while in others a key may be reported
+-	// as supported but not actually be usable (such as some emulators
+-	// that hijack certain keys).  Its best not to depend to strictly
+-	// on this function, but it can be used for hinting when building
+-	// menus, displayed hot-keys, etc.  Note that KeyRune (literal
+-	// runes) is always true.
++	// HasKey always returns true.
++	//
++	// Deprecated: This function always returns true.  Applications
++	// cannot reliably detect whether a key is supported or not with
++	// modern terminal emulators. (The intended use here was to help
++	// applications determine whether a given key stroke was supported
++	// by the terminal, but it was never reliable.)
+ 	HasKey(Key) bool
+ 
+-	// RegisterRawSeq registers a user-defined escape code that should
+-	// be parsed by the screen
+-	// Not defined for non-posix systems
+-	RegisterRawSeq(string)
++	// Suspend pauses input and output processing.  It also restores the
++	// terminal settings to what they were when the application started.
++	// This can be used to, for example, run a sub-shell.
++	Suspend() error
+ 
+-	// UnregisterRawSeq unregisters a user-defined escape code that should
+-	// be parsed by the screen
+-	// Not defined for non-posix systems
+-	UnregisterRawSeq(string)
+-
+-	// SetPaste sets whether or not this screen should be expecting paste
+-	// events. When paste is true, all key events with multiple bytes
+-	// will be treated as pastes rather than as the user typing really
+-	// fast. This is to enable a feature similar to Vim's "paste" option.
+-	SetPaste(bool)
+-
+-	// GetClipboard sends an OSC 52 escape sequence to the tty requesting
+-	// that the clipboard contents be sent in base64 encoding.
+-	GetClipboard(string) error
+-
+-	// SetClipboard sends an OSC 52 escape sequence to the tty with a base64
+-	// encoded string requesting that the string be decoded and placed into
+-	// the system clipboard.
+-	SetClipboard(string, string) error
++	// Resume resumes after Suspend().
++	Resume() error
+ 
+ 	// Beep attempts to sound an OS-dependent audible alert and returns an error
+ 	// when unsuccessful.
+ 	Beep() error
++
++	// SetSize attempts to resize the window.  It also invalidates the cells and
++	// calls the resize function.  Note that if the window size is changed, it will
++	// not be restored upon application exit.
++	//
++	// Many terminals cannot support this.  Perversely, the "modern" Windows Terminal
++	// does not support application-initiated resizing, whereas the legacy terminal does.
++	// Also, some emulators can support this but may have it disabled by default.
++	SetSize(int, int)
++
++	// LockRegion sets or unsets a lock on a region of cells. A lock on a
++	// cell prevents the cell from being redrawn.
++	LockRegion(x, y, width, height int, lock bool)
++
++	// Tty returns the underlying Tty. If the screen is not a terminal, the
++	// returned bool will be false
++	Tty() (Tty, bool)
++
++	// SetTitle sets a window title on the screen.
++	// Terminals may be configured to ignore this, or unable to.
++	// Tcell may attempt to save and restore the window title on entry and exit, but
++	// the results may vary.  Use of unicode characters may not be supported.
++	SetTitle(string)
++
++	// SetClipboard is used to post arbitrary data to the system clipboard.
++	// This need not be UTF-8 string data.  It's up to the recipient to decode the
++	// data meaningfully.  Terminals may prevent this for security reasons.
++	SetClipboard([]byte)
++
++	// GetClipboard is used to request the clipboard contents.  It may be ignored.
++	// If the terminal is willing, it will be post the clipboard contents using an
++	// EventPaste with the clipboard content as the Data() field.  Terminals may
++	// prevent this for security reasons.
++	GetClipboard()
++
++	// RegisterRawSeq registers a raw escape sequence.
++	RegisterRawSeq(string)
++
++	// UnregisterRawSeq unregisters a raw escape sequence.
++	UnregisterRawSeq(string)
+ }
+ 
+ // NewScreen returns a default Screen suitable for the user's terminal
+ // environment.
+ func NewScreen() (Screen, error) {
+-	// Windows is happier if we try for a console screen first.
+-	if s, _ := NewConsoleScreen(); s != nil {
++	if s, e := NewTerminfoScreen(); s != nil {
+ 		return s, nil
+-	} else if s, e := NewTerminfoScreen(); s != nil {
++	} else if s, _ := NewConsoleScreen(); s != nil {
+ 		return s, nil
+ 	} else {
+ 		return nil, e
+ 	}
+ }
++
++// MouseFlags are options to modify the handling of mouse events.
++// Actual events can be ORed together.
++type MouseFlags int
++
++const (
++	MouseButtonEvents = MouseFlags(1) // Click events only
++	MouseDragEvents   = MouseFlags(2) // Click-drag events (includes button events)
++	MouseMotionEvents = MouseFlags(4) // All mouse events (includes click and drag events)
++)
++
++// CursorStyle represents a given cursor style, which can include the shape and
++// whether the cursor blinks or is solid.  Support for changing this is not universal.
++type CursorStyle int
++
++const (
++	CursorStyleDefault = CursorStyle(iota) // The default
++	CursorStyleBlinkingBlock
++	CursorStyleSteadyBlock
++	CursorStyleBlinkingUnderline
++	CursorStyleSteadyUnderline
++	CursorStyleBlinkingBar
++	CursorStyleSteadyBar
++)
++
++// screenImpl is a subset of Screen that can be used with baseScreen to formulate
++// a complete implementation of Screen.  See Screen for doc comments about methods.
++type screenImpl interface {
++	Init() error
++	Fini()
++	SetStyle(style Style)
++	ShowCursor(x int, y int)
++	HideCursor()
++	SetCursor(CursorStyle, Color)
++	Size() (width, height int)
++	EnableMouse(...MouseFlags)
++	DisableMouse()
++	EnablePaste()
++	DisablePaste()
++	SetPaste(enable bool)
++	EnableFocus()
++	DisableFocus()
++	HasMouse() bool
++	Colors() int
++	Show()
++	Sync()
++	CharacterSet() string
++	RegisterRuneFallback(r rune, subst string)
++	UnregisterRuneFallback(r rune)
++	CanDisplay(r rune, checkFallbacks bool) bool
++	Resize(int, int, int, int)
++	HasKey(Key) bool
++	Suspend() error
++	Resume() error
++	Beep() error
++	SetSize(int, int)
++	SetTitle(string)
++	Tty() (Tty, bool)
++	SetClipboard([]byte)
++	GetClipboard()
++	RegisterRawSeq(string)
++	UnregisterRawSeq(string)
++
++	// Following methods are not part of the Screen api, but are used for interaction with
++	// the common layer code.
++
++	// Locker locks the underlying data structures so that we can access them
++	// in a thread-safe way.
++	sync.Locker
++
++	// GetCells returns a pointer to the underlying CellBuffer that the implementation uses.
++	// Various methods will write to these for performance, but will use the lock to do so.
++	GetCells() *CellBuffer
++
++	// StopQ is closed when the screen is shut down via Fini.  It remains open if the screen
++	// is merely suspended.
++	StopQ() <-chan struct{}
++
++	// EventQ delivers events.  Events are posted to this by the screen in response to
++	// key presses, resizes, etc.  Application code receives events from this via the
++	// Screen.PollEvent, Screen.ChannelEvents APIs.
++	EventQ() chan Event
++}
++
++type baseScreen struct {
++	screenImpl
++}
++
++func (b *baseScreen) Put(x int, y int, str string, style Style) (remain string, width int) {
++	cells := b.GetCells()
++	b.Lock()
++	defer b.Unlock()
++	return cells.Put(x, y, str, style)
++}
++
++func (b *baseScreen) PutStrStyled(x int, y int, str string, style Style) {
++	cells := b.GetCells()
++	b.Lock()
++	cols, rows := cells.Size()
++	width := 0
++	for str != "" && x < cols && y < rows {
++		str, width = cells.Put(x, y, str, style)
++		if width == 0 {
++			break
++		}
++		x += width
++	}
++	defer b.Unlock()
++}
++
++func (b *baseScreen) PutStr(x, y int, str string) {
++	b.PutStrStyled(x, y, str, StyleDefault)
++}
++
++func (b *baseScreen) SetCell(x int, y int, style Style, ch ...rune) {
++	if len(ch) > 0 {
++		b.Put(x, y, string(ch), style)
++	} else {
++		b.Put(x, y, " ", style)
++	}
++}
++
++func (b *baseScreen) Clear() {
++	b.Fill(' ', StyleDefault)
++}
++
++func (b *baseScreen) Fill(r rune, style Style) {
++	cb := b.GetCells()
++	b.Lock()
++	cb.Fill(r, style)
++	b.Unlock()
++}
++
++func (b *baseScreen) SetContent(x, y int, mainc rune, combc []rune, style Style) {
++	b.Put(x, y, string(append([]rune{mainc}, combc...)), style)
++}
++
++func (b *baseScreen) Get(x, y int) (string, Style, int) {
++	cells := b.GetCells()
++	b.Lock()
++	defer b.Unlock()
++	return cells.Get(x, y)
++}
++
++func (b *baseScreen) GetContent(x, y int) (rune, []rune, Style, int) {
++	var primary rune
++	var combining []rune
++	var style Style
++	var width int
++	cells := b.GetCells()
++	b.Lock()
++	primary, combining, style, width = cells.GetContent(x, y)
++	b.Unlock()
++	return primary, combining, style, width
++}
++
++func (b *baseScreen) LockRegion(x, y, width, height int, lock bool) {
++	cells := b.GetCells()
++	b.Lock()
++	for j := y; j < (y + height); j += 1 {
++		for i := x; i < (x + width); i += 1 {
++			switch lock {
++			case true:
++				cells.LockCell(i, j)
++			case false:
++				cells.UnlockCell(i, j)
++			}
++		}
++	}
++	b.Unlock()
++}
++
++func (b *baseScreen) ChannelEvents(ch chan<- Event, quit <-chan struct{}) {
++	defer close(ch)
++	for {
++		select {
++		case <-quit:
++			return
++		case <-b.StopQ():
++			return
++		case ev := <-b.EventQ():
++			select {
++			case <-quit:
++				return
++			case <-b.StopQ():
++				return
++			case ch <- ev:
++			}
++		}
++	}
++}
++
++func (b *baseScreen) PollEvent() Event {
++	select {
++	case <-b.StopQ():
++		return nil
++	case ev := <-b.EventQ():
++		return ev
++	}
++}
++
++func (b *baseScreen) HasPendingEvent() bool {
++	return len(b.EventQ()) > 0
++}
++
++func (b *baseScreen) PostEventWait(ev Event) {
++	select {
++	case b.EventQ() <- ev:
++	case <-b.StopQ():
++	}
++}
++
++func (b *baseScreen) PostEvent(ev Event) error {
++	select {
++	case b.EventQ() <- ev:
++		return nil
++	default:
++		return ErrEventQFull
++	}
++}
++
++func (b *baseScreen) SetCursorStyle(cs CursorStyle, ccs ...Color) {
++	if len(ccs) > 0 {
++		b.SetCursor(cs, ccs[0])
++	} else {
++		b.SetCursor(cs, ColorNone)
++	}
++}
++
++func (b *baseScreen) RegisterRawSeq(string)   {}
++func (b *baseScreen) UnregisterRawSeq(string) {}
+diff --git i/sim_test.go w/sim_test.go
+index 8cd7370..594e395 100644
+--- i/sim_test.go
++++ w/sim_test.go
+@@ -1,4 +1,4 @@
+-// Copyright 2018 The TCell Authors
++// Copyright 2023 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -63,11 +63,11 @@ func TestClearScreen(t *testing.T) {
+ 	}
+ }
+ 
+-func TestSetCell(t *testing.T) {
++func TestPut(t *testing.T) {
+ 	st := StyleDefault.Background(ColorRed).Blink(true)
+ 	s := mkTestScreen(t, "")
+ 	defer s.Fini()
+-	s.SetCell(2, 5, st, '@')
++	s.Put(2, 5, "@", st)
+ 	b, _, _ := s.GetContents()
+ 	s.Show()
+ 	if len(b) != 80*25 {
+@@ -85,7 +85,7 @@ func TestResize(t *testing.T) {
+ 	st := StyleDefault.Background(ColorYellow).Underline(true)
+ 	s := mkTestScreen(t, "")
+ 	defer s.Fini()
+-	s.SetCell(2, 5, st, '&')
++	s.Put(2, 5, "&", st)
+ 	b, x, y := s.GetContents()
+ 	s.Show()
+ 
+@@ -150,3 +150,13 @@ func TestBeep(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestTitle(t *testing.T) {
++	s := mkTestScreen(t, "")
++	defer s.Fini()
++	s.SetTitle("My Title")
++	s.Show()
++	if s.GetTitle() != "My Title" {
++		t.Errorf("Title mismatched")
++	}
++}
+diff --git i/simulation.go w/simulation.go
+index 0d5231c..4fe8f72 100644
+--- i/simulation.go
++++ w/simulation.go
+@@ -1,4 +1,4 @@
+-// Copyright 2016 The TCell Authors
++// Copyright 2024 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -27,14 +27,17 @@ func NewSimulationScreen(charset string) SimulationScreen {
+ 	if charset == "" {
+ 		charset = "UTF-8"
+ 	}
+-	s := &simscreen{charset: charset}
+-	return s
++	ss := &simscreen{charset: charset}
++	ss.Screen = &baseScreen{screenImpl: ss}
++	return ss
+ }
+ 
+ // SimulationScreen represents a screen simulation.  This is intended to
+ // be a superset of normal Screens, but also adds some important interfaces
+ // for testing.
+ type SimulationScreen interface {
++	Screen
++
+ 	// InjectKeyBytes injects a stream of bytes corresponding to
+ 	// the native encoding (see charset).  It turns true if the entire
+ 	// set of bytes were processed and delivered as KeyEvents, false
+@@ -49,16 +52,6 @@ type SimulationScreen interface {
+ 	// InjectMouse injects a mouse event.
+ 	InjectMouse(x, y int, buttons ButtonMask, mod ModMask)
+ 
+-	// InjectResize injects a resize event
+-	InjectResize()
+-
+-	// SetSize resizes the underlying physical screen.  It also causes
+-	// a resize event to be injected during the next Show() or Sync().
+-	// A new physical contents array will be allocated (with data from
+-	// the old copied), so any prior value obtained with GetContents
+-	// won't be used anymore
+-	SetSize(width, height int)
+-
+ 	// GetContents returns screen contents as an array of
+ 	// cells, along with the physical width & height.   Note that the
+ 	// physical contents will be used until the next time SetSize()
+@@ -68,7 +61,11 @@ type SimulationScreen interface {
+ 	// GetCursor returns the cursor details.
+ 	GetCursor() (x int, y int, visible bool)
+ 
+-	Screen
++	// GetTitle gets the previously set title.
++	GetTitle() string
++
++	// GetClipboardData gets the actual data for the clipboard.
++	GetClipboardData() []byte
+ }
+ 
+ // SimCell represents a simulated screen cell.  The purpose of this
+@@ -100,13 +97,17 @@ type simscreen struct {
+ 	cursory   int
+ 	cursorvis bool
+ 	mouse     bool
++	paste     bool
+ 	charset   string
+ 	encoder   transform.Transformer
+ 	decoder   transform.Transformer
+ 	fillchar  rune
+ 	fillstyle Style
+ 	fallback  map[rune]string
++	title     string
++	clipboard []byte
+ 
++	Screen
+ 	sync.Mutex
+ }
+ 
+@@ -159,43 +160,6 @@ func (s *simscreen) SetStyle(style Style) {
+ 	s.Unlock()
+ }
+ 
+-func (s *simscreen) Clear() {
+-	s.Fill(' ', s.style)
+-}
+-
+-func (s *simscreen) Fill(r rune, style Style) {
+-	s.Lock()
+-	s.back.Fill(r, style)
+-	s.Unlock()
+-}
+-
+-func (s *simscreen) SetCell(x, y int, style Style, ch ...rune) {
+-
+-	if len(ch) > 0 {
+-		s.SetContent(x, y, ch[0], ch[1:], style)
+-	} else {
+-		s.SetContent(x, y, ' ', nil, style)
+-	}
+-}
+-
+-func (s *simscreen) SetContent(x, y int, mainc rune, combc []rune, st Style) {
+-
+-	s.Lock()
+-	s.back.SetContent(x, y, mainc, combc, st)
+-	s.Unlock()
+-}
+-
+-func (s *simscreen) GetContent(x, y int) (rune, []rune, Style, int) {
+-	var mainc rune
+-	var combc []rune
+-	var style Style
+-	var width int
+-	s.Lock()
+-	mainc, combc, style, width = s.back.GetContent(x, y)
+-	s.Unlock()
+-	return mainc, combc, style, width
+-}
+-
+ func (s *simscreen) drawCell(x, y int) int {
+ 
+ 	mainc, combc, style, width := s.back.GetContent(x, y)
+@@ -283,6 +247,8 @@ func (s *simscreen) hideCursor() {
+ 	s.cursorvis = false
+ }
+ 
++func (s *simscreen) SetCursor(CursorStyle, Color) {}
++
+ func (s *simscreen) Show() {
+ 	s.Lock()
+ 	s.resize()
+@@ -316,7 +282,7 @@ func (s *simscreen) draw() {
+ 	s.showCursor()
+ }
+ 
+-func (s *simscreen) EnableMouse() {
++func (s *simscreen) EnableMouse(...MouseFlags) {
+ 	s.mouse = true
+ }
+ 
+@@ -324,6 +290,20 @@ func (s *simscreen) DisableMouse() {
+ 	s.mouse = false
+ }
+ 
++func (s *simscreen) EnablePaste() {
++	s.paste = true
++}
++
++func (s *simscreen) DisablePaste() {
++	s.paste = false
++}
++
++func (s *simscreen) EnableFocus() {
++}
++
++func (s *simscreen) DisableFocus() {
++}
++
+ func (s *simscreen) Size() (int, int) {
+ 	s.Lock()
+ 	w, h := s.back.Size()
+@@ -337,7 +317,7 @@ func (s *simscreen) resize() {
+ 	if w != ow || h != oh {
+ 		s.back.Resize(w, h)
+ 		ev := NewEventResize(w, h)
+-		s.PostEvent(ev)
++		s.postEvent(ev)
+ 	}
+ }
+ 
+@@ -345,36 +325,21 @@ func (s *simscreen) Colors() int {
+ 	return 256
+ }
+ 
+-func (s *simscreen) PollEvent() Event {
+-	select {
+-	case <-s.quit:
+-		return nil
+-	case ev := <-s.evch:
+-		return ev
+-	}
+-}
+-
+-func (s *simscreen) PostEventWait(ev Event) {
+-	s.evch <- ev
+-}
+-
+-func (s *simscreen) PostEvent(ev Event) error {
++func (s *simscreen) postEvent(ev Event) {
+ 	select {
+ 	case s.evch <- ev:
+-		return nil
+-	default:
+-		return ErrEventQFull
++	case <-s.quit:
+ 	}
+ }
+ 
+ func (s *simscreen) InjectMouse(x, y int, buttons ButtonMask, mod ModMask) {
+ 	ev := NewEventMouse(x, y, buttons, mod, "")
+-	s.PostEvent(ev)
++	s.postEvent(ev)
+ }
+ 
+ func (s *simscreen) InjectKey(key Key, r rune, mod ModMask) {
+ 	ev := NewEventKey(key, r, mod, "")
+-	s.PostEvent(ev)
++	s.postEvent(ev)
+ }
+ 
+ func (s *simscreen) InjectKeyBytes(b []byte) bool {
+@@ -385,19 +350,27 @@ outer:
+ 		if b[0] >= ' ' && b[0] <= 0x7F {
+ 			// printable ASCII easy to deal with -- no encodings
+ 			ev := NewEventKey(KeyRune, rune(b[0]), ModNone, "")
+-			s.PostEvent(ev)
++			s.postEvent(ev)
+ 			b = b[1:]
+ 			continue
+ 		}
+ 
+ 		if b[0] < 0x80 {
+-			mod := ModNone
+ 			// No encodings start with low numbered values
+-			if Key(b[0]) >= KeyCtrlA && Key(b[0]) <= KeyCtrlZ {
+-				mod = ModCtrl
++			if b[0] > 0 && b[0] < ' ' { // control keys
++				switch Key(b[0]) {
++				case KeyESC, KeyEnter, KeyTAB:
++					s.postEvent(NewEventKey(Key(b[0]), 0, 0, ""))
++					continue;
++				default:
++					s.postEvent(NewEventKey(Key(b[0]), rune(b[0])+'\x60', ModCtrl, ""))
++					continue
++				}
+ 			}
++			mod := ModNone
+ 			ev := NewEventKey(Key(b[0]), 0, mod, "")
+-			s.PostEvent(ev)
++			s.postEvent(ev)
++			b = b[1:]
+ 			continue
+ 		}
+ 
+@@ -410,7 +383,7 @@ outer:
+ 				r, _ := utf8.DecodeRune(utfb[:nout])
+ 				if r != utf8.RuneError {
+ 					ev := NewEventKey(KeyRune, r, ModNone, "")
+-					s.PostEvent(ev)
++					s.postEvent(ev)
+ 				}
+ 				b = b[nin:]
+ 				continue outer
+@@ -424,12 +397,6 @@ outer:
+ 	return !failed
+ }
+ 
+-func (s *simscreen) InjectResize() {
+-	w, h := s.physw, s.physh
+-	ev := NewEventResize(w, h)
+-	s.PostEvent(ev)
+-}
+-
+ func (s *simscreen) Sync() {
+ 	s.Lock()
+ 	s.clear = true
+@@ -518,8 +485,54 @@ func (s *simscreen) HasKey(Key) bool {
+ 
+ func (s *simscreen) RegisterRawSeq(string)   {}
+ func (s *simscreen) UnregisterRawSeq(string) {}
+-func (s *simscreen) SetPaste(bool)           {}
+ 
+-func (s *simscreen) GetClipboard(string) error         { return nil }
+-func (s *simscreen) SetClipboard(string, string) error { return nil }
+-func (s *simscreen) Beep() error                       { return nil }
++func (s *simscreen) Beep() error {
++	return nil
++}
++
++func (s *simscreen) Suspend() error {
++	return nil
++}
++
++func (s *simscreen) Resume() error {
++	return nil
++}
++
++func (s *simscreen) Tty() (Tty, bool) {
++	return nil, false
++}
++
++func (s *simscreen) GetCells() *CellBuffer {
++	return &s.back
++}
++
++func (s *simscreen) EventQ() chan Event {
++	return s.evch
++}
++
++func (s *simscreen) StopQ() <-chan struct{} {
++	return s.quit
++}
++
++func (s *simscreen) SetTitle(title string) {
++	s.title = title
++}
++
++func (s *simscreen) GetTitle() string {
++	return s.title
++}
++
++func (s *simscreen) SetClipboard(data []byte) {
++	s.clipboard = data
++}
++
++func (s *simscreen) GetClipboard() {
++	if s.clipboard != nil {
++		ev := NewEventClipboard(s.clipboard)
++		s.postEvent(ev)
++	}
++}
++
++func (s *simscreen) GetClipboardData() []byte {
++	return s.clipboard
++}
+diff --git i/style.go w/style.go
+index 4f028c1..73995c0 100644
+--- i/style.go
++++ w/style.go
+@@ -1,4 +1,4 @@
+-// Copyright 2020 The TCell Authors
++// Copyright 2024 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -14,28 +14,22 @@
+ 
+ package tcell
+ 
+-// Style represents a complete text style, including both foreground
+-// and background color.  We encode it in a 64-bit int for efficiency.
+-// The coding is (MSB): <7b flags><1b><24b fgcolor><7b attr><1b><24b bgcolor>.
+-// The <1b> is set true to indicate that the color is an RGB color, rather
+-// than a named index.
+-//
+-// This gives 24bit color options, if it ever becomes truly necessary.
+-// However, applications must not rely on this encoding.
++// Style represents a complete text style, including both foreground color,
++// background color, and additional attributes such as "bold" or "underline".
+ //
+ // Note that not all terminals can display all colors or attributes, and
+ // many might have specific incompatibilities between specific attributes
+ // and color combinations.
+ //
+-// The intention is to extend styles to support paletting, in which case
+-// some flag bit(s) would be set, and the foreground and background colors
+-// would be replaced with a palette number and palette index.
+-//
+ // To use Style, just declare a variable of its type.
+ type Style struct {
+-	fg       Color
+-	bg       Color
+-	attrs    AttrMask
++	fg      Color
++	bg      Color
++	ulStyle UnderlineStyle
++	ulColor Color
++	attrs   AttrMask
++	url     string
++	urlId   string
+ }
+ 
+ // StyleDefault represents a default style, based upon the context.
+@@ -48,42 +42,35 @@ var styleInvalid = Style{attrs: AttrInvalid}
+ // Foreground returns a new style based on s, with the foreground color set
+ // as requested.  ColorDefault can be used to select the global default.
+ func (s Style) Foreground(c Color) Style {
+-	return Style{
+-		fg:    c,
+-		bg:    s.bg,
+-		attrs: s.attrs,
+-	}
++	s2 := s
++	s2.fg = c
++	return s2
+ }
+ 
+ // Background returns a new style based on s, with the background color set
+ // as requested.  ColorDefault can be used to select the global default.
+ func (s Style) Background(c Color) Style {
+-	return Style{
+-		fg:    s.fg,
+-		bg:    c,
+-		attrs: s.attrs,
+-	}
++	s2 := s
++	s2.bg = c
++	return s2
+ }
+ 
+ // Decompose breaks a style up, returning the foreground, background,
+-// and other attributes.
++// and other attributes.  The URL if set is not included.
++// Deprecated: Applications should not attempt to decompose style,
++// as this content is not sufficient to describe the actual style.
+ func (s Style) Decompose() (fg Color, bg Color, attr AttrMask) {
+ 	return s.fg, s.bg, s.attrs
+ }
+ 
+ func (s Style) setAttrs(attrs AttrMask, on bool) Style {
++	s2 := s
+ 	if on {
+-		return Style{
+-			fg:    s.fg,
+-			bg:    s.bg,
+-			attrs: s.attrs | attrs,
+-		}
+-	}
+-	return Style{
+-		fg:    s.fg,
+-		bg:    s.bg,
+-		attrs: s.attrs &^ attrs,
++		s2.attrs |= attrs
++	} else {
++		s2.attrs &^= attrs
+ 	}
++	return s2
+ }
+ 
+ // Normal returns the style with all attributes disabled.
+@@ -125,13 +112,91 @@ func (s Style) Reverse(on bool) Style {
+ 	return s.setAttrs(AttrReverse, on)
+ }
+ 
+-// Underline returns a new style based on s, with the underline attribute set
+-// as requested.
+-func (s Style) Underline(on bool) Style {
+-	return s.setAttrs(AttrUnderline, on)
+-}
+-
+ // StrikeThrough sets strikethrough mode.
+ func (s Style) StrikeThrough(on bool) Style {
+ 	return s.setAttrs(AttrStrikeThrough, on)
+ }
++
++// Underline style.  Modern terminals have the option of rendering the
++// underline using different styles, and even different colors.
++type UnderlineStyle int
++
++const (
++	UnderlineStyleNone = UnderlineStyle(iota)
++	UnderlineStyleSolid
++	UnderlineStyleDouble
++	UnderlineStyleCurly
++	UnderlineStyleDotted
++	UnderlineStyleDashed
++)
++
++// Underline returns a new style based on s, with the underline attribute set
++// as requested.  The parameters can be:
++//
++// bool: on / off - enables just a simple underline
++// UnderlineStyle: sets a specific style (should not coexist with the bool)
++// Color: the color to use
++func (s Style) Underline(params ...interface{}) Style {
++	s2 := s
++	for _, param := range params {
++		switch v := param.(type) {
++		case bool:
++			if v {
++				s2.ulStyle = UnderlineStyleSolid
++				s2.attrs |= AttrUnderline
++			} else {
++				s2.ulStyle = UnderlineStyleNone
++				s2.attrs &^= AttrUnderline
++			}
++		case UnderlineStyle:
++			if v == UnderlineStyleNone {
++				s2.attrs &^= AttrUnderline
++			} else {
++				s2.attrs |= AttrUnderline
++			}
++			s2.ulStyle = v
++		case Color:
++			s2.ulColor = v
++		default:
++			panic("Bad type for underline")
++		}
++	}
++	return s2
++}
++
++// GetUnderlineStyle returns the underline style for the style.
++func (s Style) GetUnderlineStyle() UnderlineStyle {
++	return s.ulStyle
++}
++
++// GetUnderlineColor returns the underline color for the style.
++func (s Style) GetUnderlineColor() Color {
++	return s.ulColor
++}
++
++// Attributes returns a new style based on s, with its attributes set as
++// specified.
++func (s Style) Attributes(attrs AttrMask) Style {
++	s2 := s
++	s2.attrs = attrs
++	return s2
++}
++
++// Url returns a style with the Url set.  If the provided Url is not empty,
++// and the terminal supports it, text will typically be marked up as a clickable
++// link to that Url.  If the Url is empty, then this mode is turned off.
++func (s Style) Url(url string) Style {
++	s2 := s
++	s2.url = url
++	return s2
++}
++
++// UrlId returns a style with the UrlId set. If the provided UrlId is not empty,
++// any marked up Url with this style will be given the UrlId also. If the
++// terminal supports it, any text with the same UrlId will be grouped as if it
++// were one Url, even if it spans multiple lines.
++func (s Style) UrlId(id string) Style {
++	s2 := s
++	s2.urlId = "id=" + id
++	return s2
++}
+diff --git i/style_test.go w/style_test.go
+index 861c65f..b771c11 100644
+--- i/style_test.go
++++ w/style_test.go
+@@ -1,4 +1,4 @@
+-// Copyright 2018 The TCell Authors
++// Copyright 2024 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -23,7 +23,7 @@ func TestStyle(t *testing.T) {
+ 	defer s.Fini()
+ 
+ 	style := StyleDefault
+-	fg, bg, attr := style.Decompose()
++	fg, bg, attr := style.fg, style.bg, style.attrs
+ 
+ 	if fg != ColorDefault || bg != ColorDefault || attr != AttrNone {
+ 		t.Errorf("Bad default style (%v, %v, %v)", fg, bg, attr)
+@@ -34,7 +34,7 @@ func TestStyle(t *testing.T) {
+ 		Foreground(ColorBlue).
+ 		Blink(true)
+ 
+-	fg, bg, attr = s2.Decompose()
++	fg, bg, attr = s2.fg, s2.bg, s2.attrs
+ 	if fg != ColorBlue || bg != ColorRed || attr != AttrBlink {
+ 		t.Errorf("Bad custom style (%v, %v, %v)", fg, bg, attr)
+ 	}
+diff --git i/terms_default.go w/terms_default.go
+index da3fa21..fefcf89 100644
+--- i/terms_default.go
++++ w/terms_default.go
+@@ -1,3 +1,4 @@
++//go:build !tcell_minimal
+ // +build !tcell_minimal
+ 
+ // Copyright 2019 The TCell Authors
+@@ -19,5 +20,5 @@ package tcell
+ import (
+ 	// This imports the default terminal entries.  To disable, use the
+ 	// tcell_minimal build tag.
+-	_ "github.com/zyedidia/tcell/v2/terminfo/extended"
++	_ "github.com/gdamore/tcell/v2/terminfo/extended"
+ )
+diff --git i/terms_dynamic.go w/terms_dynamic.go
+index b029e44..9e54944 100644
+--- i/terms_dynamic.go
++++ w/terms_dynamic.go
+@@ -1,3 +1,4 @@
++//go:build !tcell_minimal && !nacl && !js && !zos && !plan9 && !windows && !android
+ // +build !tcell_minimal,!nacl,!js,!zos,!plan9,!windows,!android
+ 
+ // Copyright 2019 The TCell Authors
+@@ -24,11 +25,16 @@ import (
+ 	// also don't support Android here, because you really don't want
+ 	// to run external programs there.  Generally the android terminals
+ 	// will be automatically included anyway.
+-	"github.com/zyedidia/tcell/v2/terminfo"
+-	"github.com/zyedidia/tcell/v2/terminfo/dynamic"
++	"github.com/gdamore/tcell/v2/terminfo"
++	"github.com/gdamore/tcell/v2/terminfo/dynamic"
++
++	"fmt"
+ )
+ 
+ func loadDynamicTerminfo(term string) (*terminfo.Terminfo, error) {
++	if term == "" {
++		return nil, fmt.Errorf("%w: term not set", ErrTermNotFound)
++	}
+ 	ti, _, e := dynamic.LoadTerminfo(term)
+ 	if e != nil {
+ 		return nil, e
+diff --git i/terms_static.go w/terms_static.go
+index 471c985..6d725cb 100644
+--- i/terms_static.go
++++ w/terms_static.go
+@@ -1,4 +1,5 @@
+-// +build tcell_minimal nacl js zos plan9 windows android
++//go:build tcell_minimal || nacl || zos || plan9 || windows || android || js
++// +build tcell_minimal nacl zos plan9 windows android js
+ 
+ // Copyright 2019 The TCell Authors
+ //
+@@ -19,7 +20,7 @@ package tcell
+ import (
+ 	"errors"
+ 
+-	"github.com/zyedidia/tcell/v2/terminfo"
++	"github.com/gdamore/tcell/v2/terminfo"
+ )
+ 
+ func loadDynamicTerminfo(_ string) (*terminfo.Terminfo, error) {
+diff --git i/tscreen.go w/tscreen.go
+index 7e9c410..d346a79 100644
+--- i/tscreen.go
++++ w/tscreen.go
+@@ -1,4 +1,4 @@
+-// Copyright 2019 The TCell Authors
++// Copyright 2025 The TCell Authors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use file except in compliance with the License.
+@@ -12,50 +12,32 @@
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
+ 
++//go:build !(js && wasm)
++// +build !js !wasm
++
+ package tcell
+ 
+ import (
+ 	"bytes"
+ 	"encoding/base64"
+ 	"errors"
+-	"fmt"
+ 	"io"
+-	"log"
++	"maps"
+ 	"os"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+-	"time"
+ 	"unicode/utf8"
+ 
++	"golang.org/x/term"
+ 	"golang.org/x/text/transform"
+ 
+-	"github.com/zyedidia/tcell/v2/terminfo"
+-
+-	// import the stock terminals
+-	_ "github.com/zyedidia/tcell/v2/terminfo/base"
+-)
+-
+-// Magic strings for bracketed paste
+-// See http://cirw.in/blog/bracketed-paste
+-const (
+-	pasteEnable  = "\x1b[?2004h"
+-	pasteDisable = "\x1b[?2004l"
+-	pasteBegin   = "\x1b[200~"
+-	pasteEnd     = "\x1b[201~"
+-
+-	pasteSet   = "\x1b]52;%c;%s\x1b\\"
+-	pasteGet   = "\x1b]52;%c;?\x1b\\"
+-	pasteClear = "\x1b]52;%c;!\x1b\\"
+-
+-	pasteOSC52Begin = "\x1b]52;"
+-	pasteOSC52End   = "\x1b\\"
+-
+-	setTitle = "\x1b]2;title\a"
++	"github.com/gdamore/tcell/v2/terminfo"
+ )
+ 
+ // NewTerminfoScreen returns a Screen that uses the stock TTY interface
+-// and POSIX termios, combined with a terminfo description taken from
++// and POSIX terminal control, combined with a terminfo description taken from
+ // the $TERM environment variable.  It returns an error if the terminal
+ // is not supported for any reason.
+ //
+@@ -63,31 +45,65 @@ const (
+ // $COLUMNS environment variables can be set to the actual window size,
+ // otherwise defaults taken from the terminal database are used.
+ func NewTerminfoScreen() (Screen, error) {
+-	ti, e := terminfo.LookupTerminfo(os.Getenv("TERM"))
++	return NewTerminfoScreenFromTty(nil)
++}
++
++// LookupTerminfo attempts to find a definition for the named $TERM falling
++// back to attempting to parse the output from infocmp.
++func LookupTerminfo(name string) (ti *terminfo.Terminfo, e error) {
++	ti, e = terminfo.LookupTerminfo(name)
+ 	if e != nil {
+-		ti, e = loadDynamicTerminfo(os.Getenv("TERM"))
++		ti, e = loadDynamicTerminfo(name)
+ 		if e != nil {
+ 			return nil, e
+ 		}
+-	} else {
+ 		terminfo.AddTerminfo(ti)
+ 	}
+-	t := &tScreen{ti: ti}
+ 
+-	t.keyexist = make(map[Key]bool)
+-	t.keycodes = make(map[string]*tKeyCode)
++	return
++}
++
++var defaultTerm string
++
++// NewTerminfoScreenFromTtyTerminfo returns a Screen using a custom Tty
++// implementation  and custom terminfo specification.
++// If the passed in tty is nil, then a reasonable default (typically /dev/tty)
++// is presumed, at least on UNIX hosts. (Windows hosts will typically fail this
++// call altogether.)
++// If passed terminfo is nil, then TERM environment variable is queried for
++// terminal specification.
++func NewTerminfoScreenFromTtyTerminfo(tty Tty, ti *terminfo.Terminfo) (s Screen, e error) {
++	term := defaultTerm
++	if term == "" {
++		term = os.Getenv("TERM")
++	}
++	if ti == nil {
++		ti, e = LookupTerminfo(term)
++		if e != nil {
++			return nil, e
++		}
++	}
++
++	t := &tScreen{ti: ti, tty: tty}
++
+ 	if len(ti.Mouse) > 0 {
+ 		t.mouse = []byte(ti.Mouse)
+ 	}
+ 	t.prepareKeys()
+ 	t.buildAcsMap()
+-	t.sigwinch = make(chan os.Signal, 10)
++	t.resizeQ = make(chan bool, 1)
+ 	t.fallback = make(map[rune]string)
+-	for k, v := range RuneFallbacks {
+-		t.fallback[k] = v
+-	}
++	maps.Copy(t.fallback, RuneFallbacks)
+ 
+-	return t, nil
++	return &baseScreen{screenImpl: t}, nil
++}
++
++// NewTerminfoScreenFromTty returns a Screen using a custom Tty implementation.
++// If the passed in tty is nil, then a reasonable default (typically /dev/tty)
++// is presumed, at least on UNIX hosts. (Windows hosts will typically fail this
++// call altogether.)
++func NewTerminfoScreenFromTty(tty Tty) (Screen, error) {
++	return NewTerminfoScreenFromTtyTerminfo(tty, nil)
+ }
+ 
+ // tKeyCode represents a combination of a key code and modifiers.
+@@ -98,59 +114,84 @@ type tKeyCode struct {
+ 
+ // tScreen represents a screen backed by a terminfo implementation.
+ type tScreen struct {
+-	ti        *terminfo.Terminfo
+-	h         int
+-	w         int
+-	fini      bool
+-	cells     CellBuffer
+-	in        io.Reader
+-	out       io.Writer
+-	buffering bool // true if we are collecting writes to buf instead of sending directly to out
+-	buf       bytes.Buffer
+-	escbuf    *bytes.Buffer
+-	paste     bool
+-	curstyle  Style
+-	style     Style
+-	evch      chan Event
+-	sigwinch  chan os.Signal
+-	quit      chan struct{}
+-	indoneq   chan struct{}
+-	keyexist  map[Key]bool
+-	keycodes  map[string]*tKeyCode
+-	keychan   chan []byte
+-	keytimer  *time.Timer
+-	keyexpire time.Time
+-	cx        int
+-	cy        int
+-	mouse     []byte
+-	clear     bool
+-	cursorx   int
+-	cursory   int
+-	tiosp     *termiosPrivate
+-	wasbtn    bool
+-	acs       map[rune]string
+-	charset   string
+-	encoder   transform.Transformer
+-	decoder   transform.Transformer
+-	fallback  map[rune]string
+-	colors    map[Color]Color
+-	palette   []Color
+-	truecolor bool
+-	escaped   bool
+-	buttondn  bool
+-	rawseq    []string
+-	finiOnce  sync.Once
++	ti             *terminfo.Terminfo
++	tty            Tty
++	h              int
++	w              int
++	fini           bool
++	cells          CellBuffer
++	buffering      bool // true if we are collecting writes to buf instead of sending directly to out
++	buf            bytes.Buffer
++	curstyle       Style
++	style          Style
++	resizeQ        chan bool
++	quit           chan struct{}
++	keychan        chan []byte
++	cx             int
++	cy             int
++	mouse          []byte
++	clear          bool
++	cursorx        int
++	cursory        int
++	acs            map[rune]string
++	charset        string
++	encoder        transform.Transformer
++	decoder        transform.Transformer
++	fallback       map[rune]string
++	colors         map[Color]Color
++	palette        []Color
++	truecolor      bool
++	escaped        bool
++	buttondn       bool
++	finiOnce       sync.Once
++	enablePaste    string
++	disablePaste   string
++	enterUrl       string
++	exitUrl        string
++	setWinSize     string
++	enableFocus    string
++	disableFocus   string
++	doubleUnder    string
++	curlyUnder     string
++	dottedUnder    string
++	dashedUnder    string
++	underColor     string
++	underRGB       string
++	underFg        string // reset underline color to foreground
++	cursorStyles   map[CursorStyle]string
++	cursorStyle    CursorStyle
++	cursorColor    Color
++	cursorRGB      string
++	cursorFg       string
++	saved          *term.State
++	stopQ          chan struct{}
++	eventQ         chan Event
++	running        bool
++	wg             sync.WaitGroup
++	mouseFlags     MouseFlags
++	pasteEnabled   bool
++	focusEnabled   bool
++	setTitle       string
++	saveTitle      string
++	restoreTitle   string
++	title          string
++	setClipboard   string
++	startSyncOut   string
++	endSyncOut     string
++	enableCsiU     string
++	disableCsiU    string
++	disableEmojiWA bool // if true don't try to workaround emoji bugs
++	input          InputProcessor
+ 
+ 	sync.Mutex
+ }
+ 
+ func (t *tScreen) Init() error {
+-	t.evch = make(chan Event, 10)
+-	t.indoneq = make(chan struct{})
++	if e := t.initialize(); e != nil {
++		return e
++	}
++
+ 	t.keychan = make(chan []byte, 10)
+-	t.rawseq = make([]string, 0, 4)
+-	t.keytimer = time.NewTimer(time.Millisecond * 50)
+-	t.charset = "UTF-8"
+ 
+ 	t.charset = getCharset()
+ 	if enc := GetEncoding(t.charset); enc != nil {
+@@ -170,10 +211,6 @@ func (t *tScreen) Init() error {
+ 	if i, _ := strconv.Atoi(os.Getenv("COLUMNS")); i != 0 {
+ 		w = i
+ 	}
+-	if e := t.termioInit(); e != nil {
+-		return e
+-	}
+-
+ 	if t.ti.SetFgBgRGB != "" || t.ti.SetFgRGB != "" || t.ti.SetBgRGB != "" {
+ 		t.truecolor = true
+ 	}
+@@ -182,25 +219,19 @@ func (t *tScreen) Init() error {
+ 	if os.Getenv("TCELL_TRUECOLOR") == "disable" {
+ 		t.truecolor = false
+ 	}
+-	nColors := t.nColors()
+-	if nColors > 256 {
+-		nColors = 256 // clip to reasonable limits
+-	}
++	// clip to reasonable limits
++	nColors := min(t.nColors(), 256)
+ 	t.colors = make(map[Color]Color, nColors)
+ 	t.palette = make([]Color, nColors)
+-	for i := 0; i < nColors; i++ {
++	for i := range nColors {
+ 		t.palette[i] = Color(i) | ColorValid
+ 		// identity map for our builtin colors
+ 		t.colors[Color(i)|ColorValid] = Color(i) | ColorValid
+ 	}
+ 
+-	t.TPuts(ti.EnterCA)
+-	t.TPuts(ti.HideCursor)
+-	t.TPuts(ti.EnableAcs)
+-	t.TPuts(ti.Clear)
+-	t.TPuts(pasteEnable)
+-
+ 	t.quit = make(chan struct{})
++	t.eventQ = make(chan Event, 32)
++	t.input = NewInputProcessor(t.eventQ)
+ 
+ 	t.Lock()
+ 	t.cx = -1
+@@ -212,323 +243,122 @@ func (t *tScreen) Init() error {
+ 	t.resize()
+ 	t.Unlock()
+ 
+-	go t.mainLoop()
+-	go t.inputLoop()
++	if err := t.engage(); err != nil {
++		return err
++	}
+ 
+ 	return nil
+ }
+ 
+-func (t *tScreen) SetPaste(p bool) {
+-	t.paste = p
+-}
+-
+-func (t *tScreen) RegisterRawSeq(r string) {
+-	for _, seq := range t.rawseq {
+-		if seq == r {
+-			return
+-		}
+-	}
+-	t.rawseq = append(t.rawseq, r)
+-}
+-
+-func (t *tScreen) UnregisterRawSeq(r string) {
+-	for i, seq := range t.rawseq {
+-		if seq == r {
+-			t.rawseq[i] = t.rawseq[len(t.rawseq)-1]
+-			t.rawseq = t.rawseq[:len(t.rawseq)-1]
+-			break
+-		}
++func (t *tScreen) prepareBracketedPaste() {
++	// Another workaround for lack of reporting in terminfo.
++	// We assume if the terminal has a mouse entry, that it
++	// offers bracketed paste.  But we allow specific overrides
++	// via our terminal database.
++	if t.ti.Mouse != "" || t.ti.XTermLike {
++		t.enablePaste = "\x1b[?2004h"
++		t.disablePaste = "\x1b[?2004l"
+ 	}
+ }
+ 
+-func (t *tScreen) prepareKeyMod(key Key, mod ModMask, val string) {
+-	if val != "" {
+-		// Do not override codes that already exist
+-		if _, exist := t.keycodes[val]; !exist {
+-			t.keyexist[key] = true
+-			t.keycodes[val] = &tKeyCode{key: key, mod: mod}
+-		}
++func (t *tScreen) prepareUnderlines() {
++	if t.ti.XTermLike {
++		t.doubleUnder = "\x1b[4:2m"
++		t.curlyUnder = "\x1b[4:3m"
++		t.dottedUnder = "\x1b[4:4m"
++		t.dashedUnder = "\x1b[4:5m"
++		t.underColor = "\x1b[58:5:%p1%dm"
++		t.underRGB = "\x1b[58:2::%p1%d:%p2%d:%p3%dm"
++		t.underFg = "\x1b[59m"
+ 	}
+ }
+ 
+-func (t *tScreen) prepareKeyModReplace(key Key, replace Key, mod ModMask, val string) {
+-	if val != "" {
+-		// Do not override codes that already exist
+-		if old, exist := t.keycodes[val]; !exist || old.key == replace {
+-			t.keyexist[key] = true
+-			t.keycodes[val] = &tKeyCode{key: key, mod: mod}
+-		}
+-	}
+-}
+-
+-func (t *tScreen) prepareKeyModXTerm(key Key, val string) {
+-
+-	if strings.HasPrefix(val, "\x1b[") && strings.HasSuffix(val, "~") {
+-
+-		// Drop the trailing ~
+-		val = val[:len(val)-1]
+-
+-		// These suffixes are calculated assuming Xterm style modifier suffixes.
+-		// Please see https://invisible-island.net/xterm/ctlseqs/ctlseqs.pdf for
+-		// more information (specifically "PC-Style Function Keys").
+-		t.prepareKeyModReplace(key, key+12, ModShift, val+";2~")
+-		t.prepareKeyModReplace(key, key+48, ModAlt, val+";3~")
+-		t.prepareKeyModReplace(key, key+60, ModAlt|ModShift, val+";4~")
+-		t.prepareKeyModReplace(key, key+24, ModCtrl, val+";5~")
+-		t.prepareKeyModReplace(key, key+36, ModCtrl|ModShift, val+";6~")
+-		t.prepareKeyMod(key, ModAlt|ModCtrl, val+";7~")
+-		t.prepareKeyMod(key, ModShift|ModAlt|ModCtrl, val+";8~")
+-		t.prepareKeyMod(key, ModMeta, val+";9~")
+-		t.prepareKeyMod(key, ModMeta|ModShift, val+";10~")
+-		t.prepareKeyMod(key, ModMeta|ModAlt, val+";11~")
+-		t.prepareKeyMod(key, ModMeta|ModAlt|ModShift, val+";12~")
+-		t.prepareKeyMod(key, ModMeta|ModCtrl, val+";13~")
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModShift, val+";14~")
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModAlt, val+";15~")
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModAlt|ModShift, val+";16~")
+-	} else if strings.HasPrefix(val, "\x1bO") && len(val) == 3 {
+-		val = val[2:]
+-		t.prepareKeyModReplace(key, key+12, ModShift, "\x1b[1;2"+val)
+-		t.prepareKeyModReplace(key, key+48, ModAlt, "\x1b[1;3"+val)
+-		t.prepareKeyModReplace(key, key+24, ModCtrl, "\x1b[1;5"+val)
+-		t.prepareKeyModReplace(key, key+36, ModCtrl|ModShift, "\x1b[1;6"+val)
+-		t.prepareKeyModReplace(key, key+60, ModAlt|ModShift, "\x1b[1;4"+val)
+-		t.prepareKeyMod(key, ModAlt|ModCtrl, "\x1b[1;7"+val)
+-		t.prepareKeyMod(key, ModShift|ModAlt|ModCtrl, "\x1b[1;8"+val)
+-		t.prepareKeyMod(key, ModMeta, "\x1b[1;9"+val)
+-		t.prepareKeyMod(key, ModMeta|ModShift, "\x1b[1;10"+val)
+-		t.prepareKeyMod(key, ModMeta|ModAlt, "\x1b[1;11"+val)
+-		t.prepareKeyMod(key, ModMeta|ModAlt|ModShift, "\x1b[1;12"+val)
+-		t.prepareKeyMod(key, ModMeta|ModCtrl, "\x1b[1;13"+val)
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModShift, "\x1b[1;14"+val)
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModAlt, "\x1b[1;15"+val)
+-		t.prepareKeyMod(key, ModMeta|ModCtrl|ModAlt|ModShift, "\x1b[1;16"+val)
+-	}
+-}
+-
+-func (t *tScreen) prepareXtermModifiers() {
+-	if t.ti.Modifiers != terminfo.ModifiersXTerm {
++func (t *tScreen) prepareExtendedOSC() {
++	// Linux is a special beast - because it has a mouse entry, but does
++	// not swallow these OSC commands properly.
++	if strings.Contains(t.ti.Name, "linux") {
+ 		return
+ 	}
+-	t.prepareKeyModXTerm(KeyRight, t.ti.KeyRight)
+-	t.prepareKeyModXTerm(KeyLeft, t.ti.KeyLeft)
+-	t.prepareKeyModXTerm(KeyUp, t.ti.KeyUp)
+-	t.prepareKeyModXTerm(KeyDown, t.ti.KeyDown)
+-	t.prepareKeyModXTerm(KeyInsert, t.ti.KeyInsert)
+-	t.prepareKeyModXTerm(KeyDelete, t.ti.KeyDelete)
+-	t.prepareKeyModXTerm(KeyPgUp, t.ti.KeyPgUp)
+-	t.prepareKeyModXTerm(KeyPgDn, t.ti.KeyPgDn)
+-	t.prepareKeyModXTerm(KeyHome, t.ti.KeyHome)
+-	t.prepareKeyModXTerm(KeyEnd, t.ti.KeyEnd)
+-	t.prepareKeyModXTerm(KeyF1, t.ti.KeyF1)
+-	t.prepareKeyModXTerm(KeyF2, t.ti.KeyF2)
+-	t.prepareKeyModXTerm(KeyF3, t.ti.KeyF3)
+-	t.prepareKeyModXTerm(KeyF4, t.ti.KeyF4)
+-	t.prepareKeyModXTerm(KeyF5, t.ti.KeyF5)
+-	t.prepareKeyModXTerm(KeyF6, t.ti.KeyF6)
+-	t.prepareKeyModXTerm(KeyF7, t.ti.KeyF7)
+-	t.prepareKeyModXTerm(KeyF8, t.ti.KeyF8)
+-	t.prepareKeyModXTerm(KeyF9, t.ti.KeyF9)
+-	t.prepareKeyModXTerm(KeyF10, t.ti.KeyF10)
+-	t.prepareKeyModXTerm(KeyF11, t.ti.KeyF11)
+-	t.prepareKeyModXTerm(KeyF12, t.ti.KeyF12)
++	// More stuff for limits in terminfo.  This time we are applying
++	// the most common OSC (operating system commands).  Generally
++	// terminals that don't understand these will ignore them.
++	// Again, we condition this based on mouse capabilities.
++	if t.ti.Mouse != "" || t.ti.XTermLike {
++		t.enterUrl = "\x1b]8;%p2%s;%p1%s\x1b\\"
++		t.exitUrl = "\x1b]8;;\x1b\\"
++	}
++
++	if t.ti.Mouse != "" || t.ti.XTermLike {
++		t.setWinSize = "\x1b[8;%p1%p2%d;%dt"
++	}
++
++	if t.ti.Mouse != "" || t.ti.XTermLike {
++		t.enableFocus = "\x1b[?1004h"
++		t.disableFocus = "\x1b[?1004l"
++	}
++
++	if t.ti.XTermLike {
++		t.saveTitle = "\x1b[22;2t"
++		t.restoreTitle = "\x1b[23;2t"
++		// this also tries to request that UTF-8 is allowed in the title
++		t.setTitle = "\x1b[>2t\x1b]2;%p1%s\x1b\\"
++	}
++
++	if t.setClipboard == "" && t.ti.XTermLike {
++		// this string takes a base64 string and sends it to the clipboard.
++		// it will also be able to retrieve the clipboard using "?" as the
++		// sent string, when we support that.
++		t.setClipboard = "\x1b]52;c;%p1%s\x1b\\"
++	}
++
++	if t.startSyncOut == "" && t.ti.XTermLike {
++		// this is in theory a queryable private mode, but we just assume it will be ok
++		// The terminals we have been able to test it all either just swallow it, or
++		// handle it.
++		t.startSyncOut = "\x1b[?2026h"
++		t.endSyncOut = "\x1b[?2026l"
++	}
++
++	if t.enableCsiU == "" && t.ti.XTermLike {
++		if runtime.GOOS == "windows" {
++			t.enableCsiU = "\x1b[?9001h"
++			t.disableCsiU = "\x1b[?9001l"
++		} else {
++			t.enableCsiU = "\x1b[>1u"
++			t.disableCsiU = "\x1b[<u"
++		}
++	}
+ }
+ 
+-func (t *tScreen) prepareKey(key Key, val string) {
+-	t.prepareKeyMod(key, ModNone, val)
++func (t *tScreen) prepareCursorStyles() {
++	if t.ti.Mouse != "" || t.ti.XTermLike {
++		t.cursorStyles = map[CursorStyle]string{
++			CursorStyleDefault:           "\x1b[0 q",
++			CursorStyleBlinkingBlock:     "\x1b[1 q",
++			CursorStyleSteadyBlock:       "\x1b[2 q",
++			CursorStyleBlinkingUnderline: "\x1b[3 q",
++			CursorStyleSteadyUnderline:   "\x1b[4 q",
++			CursorStyleBlinkingBar:       "\x1b[5 q",
++			CursorStyleSteadyBar:         "\x1b[6 q",
++		}
++		if t.cursorRGB == "" {
++			t.cursorRGB = "\x1b]12;#%p1%02x%p2%02x%p3%02x\007"
++			t.cursorFg = "\x1b]112\007"
++		}
++	}
+ }
+ 
+ func (t *tScreen) prepareKeys() {
+ 	ti := t.ti
+-	t.prepareKey(KeyBackspace, ti.KeyBackspace)
+-	t.prepareKey(KeyF1, ti.KeyF1)
+-	t.prepareKey(KeyF2, ti.KeyF2)
+-	t.prepareKey(KeyF3, ti.KeyF3)
+-	t.prepareKey(KeyF4, ti.KeyF4)
+-	t.prepareKey(KeyF5, ti.KeyF5)
+-	t.prepareKey(KeyF6, ti.KeyF6)
+-	t.prepareKey(KeyF7, ti.KeyF7)
+-	t.prepareKey(KeyF8, ti.KeyF8)
+-	t.prepareKey(KeyF9, ti.KeyF9)
+-	t.prepareKey(KeyF10, ti.KeyF10)
+-	t.prepareKey(KeyF11, ti.KeyF11)
+-	t.prepareKey(KeyF12, ti.KeyF12)
+-	t.prepareKey(KeyF13, ti.KeyF13)
+-	t.prepareKey(KeyF14, ti.KeyF14)
+-	t.prepareKey(KeyF15, ti.KeyF15)
+-	t.prepareKey(KeyF16, ti.KeyF16)
+-	t.prepareKey(KeyF17, ti.KeyF17)
+-	t.prepareKey(KeyF18, ti.KeyF18)
+-	t.prepareKey(KeyF19, ti.KeyF19)
+-	t.prepareKey(KeyF20, ti.KeyF20)
+-	t.prepareKey(KeyF21, ti.KeyF21)
+-	t.prepareKey(KeyF22, ti.KeyF22)
+-	t.prepareKey(KeyF23, ti.KeyF23)
+-	t.prepareKey(KeyF24, ti.KeyF24)
+-	t.prepareKey(KeyF25, ti.KeyF25)
+-	t.prepareKey(KeyF26, ti.KeyF26)
+-	t.prepareKey(KeyF27, ti.KeyF27)
+-	t.prepareKey(KeyF28, ti.KeyF28)
+-	t.prepareKey(KeyF29, ti.KeyF29)
+-	t.prepareKey(KeyF30, ti.KeyF30)
+-	t.prepareKey(KeyF31, ti.KeyF31)
+-	t.prepareKey(KeyF32, ti.KeyF32)
+-	t.prepareKey(KeyF33, ti.KeyF33)
+-	t.prepareKey(KeyF34, ti.KeyF34)
+-	t.prepareKey(KeyF35, ti.KeyF35)
+-	t.prepareKey(KeyF36, ti.KeyF36)
+-	t.prepareKey(KeyF37, ti.KeyF37)
+-	t.prepareKey(KeyF38, ti.KeyF38)
+-	t.prepareKey(KeyF39, ti.KeyF39)
+-	t.prepareKey(KeyF40, ti.KeyF40)
+-	t.prepareKey(KeyF41, ti.KeyF41)
+-	t.prepareKey(KeyF42, ti.KeyF42)
+-	t.prepareKey(KeyF43, ti.KeyF43)
+-	t.prepareKey(KeyF44, ti.KeyF44)
+-	t.prepareKey(KeyF45, ti.KeyF45)
+-	t.prepareKey(KeyF46, ti.KeyF46)
+-	t.prepareKey(KeyF47, ti.KeyF47)
+-	t.prepareKey(KeyF48, ti.KeyF48)
+-	t.prepareKey(KeyF49, ti.KeyF49)
+-	t.prepareKey(KeyF50, ti.KeyF50)
+-	t.prepareKey(KeyF51, ti.KeyF51)
+-	t.prepareKey(KeyF52, ti.KeyF52)
+-	t.prepareKey(KeyF53, ti.KeyF53)
+-	t.prepareKey(KeyF54, ti.KeyF54)
+-	t.prepareKey(KeyF55, ti.KeyF55)
+-	t.prepareKey(KeyF56, ti.KeyF56)
+-	t.prepareKey(KeyF57, ti.KeyF57)
+-	t.prepareKey(KeyF58, ti.KeyF58)
+-	t.prepareKey(KeyF59, ti.KeyF59)
+-	t.prepareKey(KeyF60, ti.KeyF60)
+-	t.prepareKey(KeyF61, ti.KeyF61)
+-	t.prepareKey(KeyF62, ti.KeyF62)
+-	t.prepareKey(KeyF63, ti.KeyF63)
+-	t.prepareKey(KeyF64, ti.KeyF64)
+-	t.prepareKey(KeyInsert, ti.KeyInsert)
+-	t.prepareKey(KeyDelete, ti.KeyDelete)
+-	t.prepareKey(KeyHome, ti.KeyHome)
+-	t.prepareKey(KeyEnd, ti.KeyEnd)
+-	t.prepareKey(KeyUp, ti.KeyUp)
+-	t.prepareKey(KeyDown, ti.KeyDown)
+-	t.prepareKey(KeyLeft, ti.KeyLeft)
+-	t.prepareKey(KeyRight, ti.KeyRight)
+-	t.prepareKey(KeyPgUp, ti.KeyPgUp)
+-	t.prepareKey(KeyPgDn, ti.KeyPgDn)
+-	t.prepareKey(KeyHelp, ti.KeyHelp)
+-	t.prepareKey(KeyPrint, ti.KeyPrint)
+-	t.prepareKey(KeyCancel, ti.KeyCancel)
+-	t.prepareKey(KeyExit, ti.KeyExit)
+-	t.prepareKey(KeyBacktab, ti.KeyBacktab)
+-
+-	t.prepareKeyMod(KeyRight, ModShift, ti.KeyShfRight)
+-	t.prepareKeyMod(KeyLeft, ModShift, ti.KeyShfLeft)
+-	t.prepareKeyMod(KeyUp, ModShift, ti.KeyShfUp)
+-	t.prepareKeyMod(KeyDown, ModShift, ti.KeyShfDown)
+-	t.prepareKeyMod(KeyHome, ModShift, ti.KeyShfHome)
+-	t.prepareKeyMod(KeyEnd, ModShift, ti.KeyShfEnd)
+-	t.prepareKeyMod(KeyPgUp, ModShift, ti.KeyShfPgUp)
+-	t.prepareKeyMod(KeyPgDn, ModShift, ti.KeyShfPgDn)
+-
+-	t.prepareKeyMod(KeyRight, ModCtrl, ti.KeyCtrlRight)
+-	t.prepareKeyMod(KeyLeft, ModCtrl, ti.KeyCtrlLeft)
+-	t.prepareKeyMod(KeyUp, ModCtrl, ti.KeyCtrlUp)
+-	t.prepareKeyMod(KeyDown, ModCtrl, ti.KeyCtrlDown)
+-	t.prepareKeyMod(KeyHome, ModCtrl, ti.KeyCtrlHome)
+-	t.prepareKeyMod(KeyEnd, ModCtrl, ti.KeyCtrlEnd)
+-
+-	if t.ti.Modifiers == terminfo.ModifiersDynamic {
+-		t.prepareKeyMod(KeyUp, ModMeta, ti.KeyMetaUp)
+-		t.prepareKeyMod(KeyDown, ModMeta, ti.KeyMetaDown)
+-		t.prepareKeyMod(KeyRight, ModMeta, ti.KeyMetaRight)
+-		t.prepareKeyMod(KeyLeft, ModMeta, ti.KeyMetaLeft)
+-		t.prepareKeyMod(KeyUp, ModAlt, ti.KeyAltUp)
+-		t.prepareKeyMod(KeyDown, ModAlt, ti.KeyAltDown)
+-		t.prepareKeyMod(KeyRight, ModAlt, ti.KeyAltRight)
+-		t.prepareKeyMod(KeyLeft, ModAlt, ti.KeyAltLeft)
+-		t.prepareKeyMod(KeyUp, ModAlt|ModShift, ti.KeyAltShfUp)
+-		t.prepareKeyMod(KeyDown, ModAlt|ModShift, ti.KeyAltShfDown)
+-		t.prepareKeyMod(KeyRight, ModAlt|ModShift, ti.KeyAltShfRight)
+-		t.prepareKeyMod(KeyLeft, ModAlt|ModShift, ti.KeyAltShfLeft)
+-
+-		t.prepareKeyMod(KeyUp, ModMeta|ModShift, ti.KeyMetaShfUp)
+-		t.prepareKeyMod(KeyDown, ModMeta|ModShift, ti.KeyMetaShfDown)
+-		t.prepareKeyMod(KeyRight, ModMeta|ModShift, ti.KeyMetaShfRight)
+-		t.prepareKeyMod(KeyLeft, ModMeta|ModShift, ti.KeyMetaShfLeft)
+-
+-		t.prepareKeyMod(KeyUp, ModCtrl|ModShift, ti.KeyCtrlShfUp)
+-		t.prepareKeyMod(KeyDown, ModCtrl|ModShift, ti.KeyCtrlShfDown)
+-		t.prepareKeyMod(KeyRight, ModCtrl|ModShift, ti.KeyCtrlShfRight)
+-		t.prepareKeyMod(KeyLeft, ModCtrl|ModShift, ti.KeyCtrlShfLeft)
+-
+-		t.prepareKeyMod(KeyHome, ModAlt, ti.KeyAltHome)
+-		t.prepareKeyMod(KeyEnd, ModAlt, ti.KeyAltEnd)
+-		t.prepareKeyMod(KeyHome, ModCtrl|ModShift, ti.KeyCtrlShfHome)
+-		t.prepareKeyMod(KeyEnd, ModCtrl|ModShift, ti.KeyCtrlShfEnd)
+-		t.prepareKeyMod(KeyHome, ModAlt|ModShift, ti.KeyAltShfHome)
+-		t.prepareKeyMod(KeyEnd, ModAlt|ModShift, ti.KeyAltShfEnd)
+-		t.prepareKeyMod(KeyHome, ModMeta|ModShift, ti.KeyMetaShfHome)
+-		t.prepareKeyMod(KeyEnd, ModMeta|ModShift, ti.KeyMetaShfEnd)
+-	}
+-
+-	// Sadly, xterm handling of keycodes is somewhat erratic.  In
+-	// particular, different codes are sent depending on application
+-	// mode is in use or not, and the entries for many of these are
+-	// simply absent from terminfo on many systems.  So we insert
+-	// a number of escape sequences if they are not already used, in
+-	// order to have the widest correct usage.  Note that prepareKey
+-	// will not inject codes if the escape sequence is already known.
+-	// We also only do this for terminals that have the application
+-	// mode present.
+-
+-	// Cursor mode
+-	if ti.EnterKeypad != "" {
+-		t.prepareKey(KeyUp, "\x1b[A")
+-		t.prepareKey(KeyDown, "\x1b[B")
+-		t.prepareKey(KeyRight, "\x1b[C")
+-		t.prepareKey(KeyLeft, "\x1b[D")
+-		t.prepareKey(KeyEnd, "\x1b[F")
+-		t.prepareKey(KeyHome, "\x1b[H")
+-		t.prepareKey(KeyDelete, "\x1b[3~")
+-		t.prepareKey(KeyHome, "\x1b[1~")
+-		t.prepareKey(KeyEnd, "\x1b[4~")
+-		t.prepareKey(KeyPgUp, "\x1b[5~")
+-		t.prepareKey(KeyPgDn, "\x1b[6~")
+-
+-		// Application mode
+-		t.prepareKey(KeyUp, "\x1bOA")
+-		t.prepareKey(KeyDown, "\x1bOB")
+-		t.prepareKey(KeyRight, "\x1bOC")
+-		t.prepareKey(KeyLeft, "\x1bOD")
+-		t.prepareKey(KeyHome, "\x1bOH")
+-	}
+-
+-	t.prepareXtermModifiers()
+-
+-outer:
+-	// Add key mappings for control keys.
+-	for i := 0; i < ' '; i++ {
+-		// Do not insert direct key codes for ambiguous keys.
+-		// For example, ESC is used for lots of other keys, so
+-		// when parsing this we don't want to fast path handling
+-		// of it, but instead wait a bit before parsing it as in
+-		// isolation.
+-		for esc := range t.keycodes {
+-			if []byte(esc)[0] == byte(i) {
+-				continue outer
+-			}
+-		}
+-
+-		t.keyexist[Key(i)] = true
+-
+-		mod := ModCtrl
+-		switch Key(i) {
+-		case KeyBS, KeyTAB, KeyESC, KeyCR:
+-			// directly typeable- no control sequence
+-			mod = ModNone
+-		}
+-		t.keycodes[string(rune(i))] = &tKeyCode{key: Key(i), mod: mod}
++	if strings.HasPrefix(ti.Name, "xterm") {
++		// assume its some form of XTerm clone
++		t.ti.XTermLike = true
++		ti.XTermLike = true
+ 	}
++	t.prepareBracketedPaste()
++	t.prepareCursorStyles()
++	t.prepareUnderlines()
++	t.prepareExtendedOSC()
+ }
+ 
+ func (t *tScreen) Fini() {
+@@ -536,31 +366,8 @@ func (t *tScreen) Fini() {
+ }
+ 
+ func (t *tScreen) finish() {
+-	t.Lock()
+-	defer t.Unlock()
+-
+-	ti := t.ti
+-	t.cells.Resize(0, 0)
+-	t.TPuts(ti.ShowCursor)
+-	t.TPuts(ti.AttrOff)
+-	t.TPuts(ti.Clear)
+-	t.TPuts(ti.ExitCA)
+-	t.TPuts(ti.ExitKeypad)
+-	t.TPuts(ti.TParm(ti.MouseMode, 0))
+-	t.TPuts(pasteDisable)
+-	t.curstyle = styleInvalid
+-	t.clear = false
+-	t.fini = true
+-
+-	select {
+-	case <-t.quit:
+-		// do nothing, already closed
+-
+-	default:
+-		close(t.quit)
+-	}
+-
+-	t.termioFini()
++	close(t.quit)
++	t.finalize()
+ }
+ 
+ func (t *tScreen) SetStyle(style Style) {
+@@ -571,55 +378,19 @@ func (t *tScreen) SetStyle(style Style) {
+ 	t.Unlock()
+ }
+ 
+-func (t *tScreen) Clear() {
+-	t.Fill(' ', t.style)
+-}
++func (t *tScreen) encodeStr(s string, buf []byte) []byte {
+ 
+-func (t *tScreen) Fill(r rune, style Style) {
+-	t.Lock()
+-	if !t.fini {
+-		t.cells.Fill(r, style)
+-	}
+-	t.Unlock()
+-}
+-
+-func (t *tScreen) SetContent(x, y int, mainc rune, combc []rune, style Style) {
+-	t.Lock()
+-	if !t.fini {
+-		t.cells.SetContent(x, y, mainc, combc, style)
+-	}
+-	t.Unlock()
+-}
+-
+-func (t *tScreen) GetContent(x, y int) (rune, []rune, Style, int) {
+-	t.Lock()
+-	mainc, combc, style, width := t.cells.GetContent(x, y)
+-	t.Unlock()
+-	return mainc, combc, style, width
+-}
+-
+-func (t *tScreen) SetCell(x, y int, style Style, ch ...rune) {
+-	if len(ch) > 0 {
+-		t.SetContent(x, y, ch[0], ch[1:], style)
+-	} else {
+-		t.SetContent(x, y, ' ', nil, style)
+-	}
+-}
+-
+-func (t *tScreen) encodeRune(r rune, buf []byte) []byte {
+-
+-	nb := make([]byte, 6)
+-	ob := make([]byte, 6)
+-	num := utf8.EncodeRune(ob, r)
+-	ob = ob[:num]
++	var dstBuf [20]byte
++	nb := dstBuf[:]
+ 	dst := 0
+ 	var err error
+ 	if enc := t.encoder; enc != nil {
+ 		enc.Reset()
+-		dst, _, err = enc.Transform(nb, ob, true)
++		dst, _, err = enc.Transform(nb, []byte(s), true)
+ 	}
+ 	if err != nil || dst == 0 || nb[0] == '\x1a' {
+ 		// Combining characters are elided
++		r, _ := utf8.DecodeRuneInString(s)
+ 		if len(buf) == 0 {
+ 			if acs, ok := t.acs[r]; ok {
+ 				buf = append(buf, []byte(acs)...)
+@@ -636,11 +407,27 @@ func (t *tScreen) encodeRune(r rune, buf []byte) []byte {
+ 	return buf
+ }
+ 
+-func (t *tScreen) sendFgBg(fg Color, bg Color) {
++func (t *tScreen) sendFgBg(fg Color, bg Color, attr AttrMask) AttrMask {
+ 	ti := t.ti
+-	if ti.Colors == 0 {
+-		return
++	if t.Colors() == 0 {
++		// foreground vs background, we calculate luminance
++		// and possibly do a reverse video
++		if !fg.Valid() {
++			return attr
++		}
++		v, ok := t.colors[fg]
++		if !ok {
++			v = FindColor(fg, []Color{ColorBlack, ColorWhite})
++			t.colors[fg] = v
++		}
++		switch v {
++		case ColorWhite:
++			return attr
++		case ColorBlack:
++			return attr ^ AttrReverse
++		}
+ 	}
++
+ 	if fg == ColorReset || bg == ColorReset {
+ 		t.TPuts(ti.ResetFgBg)
+ 	}
+@@ -651,7 +438,7 @@ func (t *tScreen) sendFgBg(fg Color, bg Color) {
+ 			t.TPuts(ti.TParm(ti.SetFgBgRGB,
+ 				int(r1), int(g1), int(b1),
+ 				int(r2), int(g2), int(b2)))
+-			return
++			return attr
+ 		}
+ 
+ 		if fg.IsRGB() && ti.SetFgRGB != "" {
+@@ -698,18 +485,36 @@ func (t *tScreen) sendFgBg(fg Color, bg Color) {
+ 			t.TPuts(ti.TParm(ti.SetBg, int(bg&0xff)))
+ 		}
+ 	}
++	return attr
+ }
+ 
+ func (t *tScreen) drawCell(x, y int) int {
+ 
+ 	ti := t.ti
+ 
+-	mainc, combc, style, width := t.cells.GetContent(x, y)
++	str, style, width := t.cells.Get(x, y)
+ 	if !t.cells.Dirty(x, y) {
+ 		return width
+ 	}
+ 
+-	if t.cy != y || t.cx != x {
++	if y == t.h-1 && x == t.w-1 && t.ti.AutoMargin && ti.DisableAutoMargin == "" && ti.InsertChar != "" {
++		// our solution is somewhat goofy.
++		// we write to the second to the last cell what we want in the last cell, then we
++		// insert a character at that 2nd to last position to shift the last column into
++		// place, then we rewrite that 2nd to last cell.  Old terminals suck.
++		t.TPuts(ti.TGoto(x-1, y))
++		defer func() {
++			t.TPuts(ti.TGoto(x-1, y))
++			t.TPuts(ti.InsertChar)
++			t.cy = y
++			t.cx = x - 1
++			t.cells.SetDirty(x-1, y, true)
++			_ = t.drawCell(x-1, y)
++			t.TPuts(t.ti.TGoto(0, 0))
++			t.cy = 0
++			t.cx = 0
++		}()
++	} else if t.cy != y || t.cx != x {
+ 		t.TPuts(ti.TGoto(x, y))
+ 		t.cx = x
+ 		t.cy = y
+@@ -719,16 +524,47 @@ func (t *tScreen) drawCell(x, y int) int {
+ 		style = t.style
+ 	}
+ 	if style != t.curstyle {
+-		fg, bg, attrs := style.Decompose()
++		fg, bg, attrs := style.fg, style.bg, style.attrs
+ 
+ 		t.TPuts(ti.AttrOff)
+ 
+-		t.sendFgBg(fg, bg)
++		attrs = t.sendFgBg(fg, bg, attrs)
+ 		if attrs&AttrBold != 0 {
+ 			t.TPuts(ti.Bold)
+ 		}
+-		if attrs&AttrUnderline != 0 {
+-			t.TPuts(ti.Underline)
++		if us, uc := style.ulStyle, style.ulColor; us != UnderlineStyleNone {
++			if t.underColor != "" || t.underRGB != "" {
++				if uc == ColorReset {
++					t.TPuts(t.underFg)
++				} else if uc.IsRGB() {
++					if t.underRGB != "" {
++						r, g, b := uc.RGB()
++						t.TPuts(ti.TParm(t.underRGB, int(r), int(g), int(b)))
++					} else {
++						if v, ok := t.colors[uc]; ok {
++							uc = v
++						} else {
++							v = FindColor(uc, t.palette)
++							t.colors[uc] = v
++							uc = v
++						}
++						t.TPuts(ti.TParm(t.underColor, int(uc&0xff)))
++					}
++				} else if uc.Valid() {
++					t.TPuts(ti.TParm(t.underColor, int(uc&0xff)))
++				}
++			}
++			t.TPuts(ti.Underline) // to ensure everyone gets at least a basic underline
++			switch us {
++			case UnderlineStyleDouble:
++				t.TPuts(t.doubleUnder)
++			case UnderlineStyleCurly:
++				t.TPuts(t.curlyUnder)
++			case UnderlineStyleDotted:
++				t.TPuts(t.dottedUnder)
++			case UnderlineStyleDashed:
++				t.TPuts(t.dashedUnder)
++			}
+ 		}
+ 		if attrs&AttrReverse != 0 {
+ 			t.TPuts(ti.Reverse)
+@@ -745,8 +581,19 @@ func (t *tScreen) drawCell(x, y int) int {
+ 		if attrs&AttrStrikeThrough != 0 {
+ 			t.TPuts(ti.StrikeThrough)
+ 		}
++
++		// URL string can be long, so don't send it unless we really need to
++		if t.enterUrl != "" && t.curstyle.url != style.url {
++			if style.url != "" {
++				t.TPuts(ti.TParm(t.enterUrl, style.url, style.urlId))
++			} else {
++				t.TPuts(t.exitUrl)
++			}
++		}
++
+ 		t.curstyle = style
+ 	}
++
+ 	// now emit runes - taking care to not overrun width with a
+ 	// wide character, and to ensure that we emit exactly one regular
+ 	// character followed up by any residual combing characters
+@@ -755,24 +602,16 @@ func (t *tScreen) drawCell(x, y int) int {
+ 		width = 1
+ 	}
+ 
+-	var str string
+-
+-	buf := make([]byte, 0, 6)
+-
+-	buf = t.encodeRune(mainc, buf)
+-	for _, r := range combc {
+-		buf = t.encodeRune(r, buf)
+-	}
+-
++	buf := make([]byte, 20)
++	buf = t.encodeStr(str, buf)
+ 	str = string(buf)
++
+ 	if width > 1 && str == "?" {
+ 		// No FullWidth character support
+ 		str = "? "
+ 		t.cx = -1
+ 	}
+ 
+-	// XXX: check for hazeltine not being able to display ~
+-
+ 	if x > t.w-width {
+ 		// too wide to fit; emit a single space instead
+ 		width = 1
+@@ -795,6 +634,13 @@ func (t *tScreen) ShowCursor(x, y int) {
+ 	t.Unlock()
+ }
+ 
++func (t *tScreen) SetCursor(cs CursorStyle, cc Color) {
++	t.Lock()
++	t.cursorStyle = cs
++	t.cursorColor = cc
++	t.Unlock()
++}
++
+ func (t *tScreen) HideCursor() {
+ 	t.ShowCursor(-1, -1)
+ }
+@@ -809,6 +655,19 @@ func (t *tScreen) showCursor() {
+ 	}
+ 	t.TPuts(t.ti.TGoto(x, y))
+ 	t.TPuts(t.ti.ShowCursor)
++	if t.cursorStyles != nil {
++		if esc, ok := t.cursorStyles[t.cursorStyle]; ok {
++			t.TPuts(esc)
++		}
++	}
++	if t.cursorRGB != "" {
++		if t.cursorColor == ColorReset {
++			t.TPuts(t.cursorFg)
++		} else if t.cursorColor.Valid() {
++			r, g, b := t.cursorColor.RGB()
++			t.TPuts(t.ti.TParm(t.cursorRGB, int(r), int(g), int(b)))
++		}
++	}
+ 	t.cx = x
+ 	t.cy = y
+ }
+@@ -821,9 +680,9 @@ func (t *tScreen) showCursor() {
+ // write operation at some point later.
+ func (t *tScreen) writeString(s string) {
+ 	if t.buffering {
+-		io.WriteString(&t.buf, s)
++		_, _ = io.WriteString(&t.buf, s)
+ 	} else {
+-		io.WriteString(t.out, s)
++		_, _ = io.WriteString(t.tty, s)
+ 	}
+ }
+ 
+@@ -831,7 +690,7 @@ func (t *tScreen) TPuts(s string) {
+ 	if t.buffering {
+ 		t.ti.TPuts(&t.buf, s)
+ 	} else {
+-		t.ti.TPuts(t.out, s)
++		t.ti.TPuts(t.tty, s)
+ 	}
+ }
+ 
+@@ -845,12 +704,21 @@ func (t *tScreen) Show() {
+ }
+ 
+ func (t *tScreen) clearScreen() {
+-	fg, bg, _ := t.style.Decompose()
+-	t.sendFgBg(fg, bg)
++	t.TPuts(t.ti.AttrOff)
++	t.TPuts(t.exitUrl)
++	_ = t.sendFgBg(t.style.fg, t.style.bg, AttrNone)
+ 	t.TPuts(t.ti.Clear)
+ 	t.clear = false
+ }
+ 
++func (t *tScreen) startBuffering() {
++	t.TPuts(t.startSyncOut)
++}
++
++func (t *tScreen) endBuffering() {
++	t.TPuts(t.endSyncOut)
++}
++
+ func (t *tScreen) hideCursor() {
+ 	// does not update cursor position
+ 	if t.ti.HideCursor != "" {
+@@ -864,14 +732,18 @@ func (t *tScreen) hideCursor() {
+ }
+ 
+ func (t *tScreen) draw() {
+-	// clobber cursor position, because we're gonna change it all
++	// clobber cursor position, because we're going to change it all
+ 	t.cx = -1
+ 	t.cy = -1
++	// make no style assumptions
++	t.curstyle = styleInvalid
+ 
+ 	t.buf.Reset()
+ 	t.buffering = true
++	t.startBuffering()
+ 	defer func() {
+ 		t.buffering = false
++		t.endBuffering()
+ 	}()
+ 
+ 	// hide the cursor while we move stuff around
+@@ -899,18 +771,105 @@ func (t *tScreen) draw() {
+ 	// restore the cursor
+ 	t.showCursor()
+ 
+-	t.buf.WriteTo(t.out)
++	_, _ = t.buf.WriteTo(t.tty)
+ }
+ 
+-func (t *tScreen) EnableMouse() {
+-	if len(t.mouse) != 0 {
+-		t.TPuts(t.ti.TParm(t.ti.MouseMode, 1))
++func (t *tScreen) EnableMouse(flags ...MouseFlags) {
++	var f MouseFlags
++	flagsPresent := false
++	for _, flag := range flags {
++		f |= flag
++		flagsPresent = true
+ 	}
++	if !flagsPresent {
++		f = MouseMotionEvents | MouseDragEvents | MouseButtonEvents
++	}
++
++	t.Lock()
++	t.mouseFlags = f
++	t.enableMouse(f)
++	t.Unlock()
++}
++
++func (t *tScreen) enableMouse(f MouseFlags) {
++	// Rather than using terminfo to find mouse escape sequences, we rely on the fact that
++	// pretty much *every* terminal that supports mouse tracking follows the
++	// XTerm standards (the modern ones).
++	if len(t.mouse) != 0 {
++		// start by disabling all tracking.
++		t.TPuts("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")
++		if f&MouseButtonEvents != 0 {
++			t.TPuts("\x1b[?1000h")
++		}
++		if f&MouseDragEvents != 0 {
++			t.TPuts("\x1b[?1002h")
++		}
++		if f&MouseMotionEvents != 0 {
++			t.TPuts("\x1b[?1003h")
++		}
++		if f&(MouseButtonEvents|MouseDragEvents|MouseMotionEvents) != 0 {
++			t.TPuts("\x1b[?1006h")
++		}
++	}
++
+ }
+ 
+ func (t *tScreen) DisableMouse() {
+-	if len(t.mouse) != 0 {
+-		t.TPuts(t.ti.TParm(t.ti.MouseMode, 0))
++	t.Lock()
++	t.mouseFlags = 0
++	t.enableMouse(0)
++	t.Unlock()
++}
++
++func (t *tScreen) EnablePaste() {
++	t.Lock()
++	t.pasteEnabled = true
++	t.enablePasting(true)
++	t.Unlock()
++}
++
++func (t *tScreen) DisablePaste() {
++	t.Lock()
++	t.pasteEnabled = false
++	t.enablePasting(false)
++	t.Unlock()
++}
++
++func (t *tScreen) enablePasting(on bool) {
++	var s string
++	if on {
++		s = t.enablePaste
++	} else {
++		s = t.disablePaste
++	}
++	if s != "" {
++		t.TPuts(s)
++	}
++}
++
++func (t *tScreen) EnableFocus() {
++	t.Lock()
++	t.focusEnabled = true
++	t.enableFocusReporting()
++	t.Unlock()
++}
++
++func (t *tScreen) DisableFocus() {
++	t.Lock()
++	t.focusEnabled = false
++	t.disableFocusReporting()
++	t.Unlock()
++}
++
++func (t *tScreen) enableFocusReporting() {
++	if t.enableFocus != "" {
++		t.TPuts(t.enableFocus)
++	}
++}
++
++func (t *tScreen) disableFocusReporting() {
++	if t.disableFocus != "" {
++		t.TPuts(t.disableFocus)
+ 	}
+ }
+ 
+@@ -922,22 +881,27 @@ func (t *tScreen) Size() (int, int) {
+ }
+ 
+ func (t *tScreen) resize() {
+-	if w, h, e := t.getWinSize(); e == nil {
+-		if w != t.w || h != t.h {
+-			t.cx = -1
+-			t.cy = -1
+-
+-			t.cells.Resize(w, h)
+-			t.cells.Invalidate()
+-			t.h = h
+-			t.w = w
+-			ev := NewEventResize(w, h)
+-			t.PostEvent(ev)
+-		}
++	ws, err := t.tty.WindowSize()
++	if err != nil {
++		return
+ 	}
++	if ws.Width == t.w && ws.Height == t.h {
++		return
++	}
++	t.cx = -1
++	t.cy = -1
++
++	t.cells.Resize(ws.Width, ws.Height)
++	t.cells.Invalidate()
++	t.h = ws.Height
++	t.w = ws.Width
++	t.input.SetSize(ws.Width, ws.Height)
+ }
+ 
+ func (t *tScreen) Colors() int {
++	if os.Getenv("NO_COLOR") != "" {
++		return 0
++	}
+ 	// this doesn't change, no need for lock
+ 	if t.truecolor {
+ 		return 1 << 24
+@@ -949,23 +913,17 @@ func (t *tScreen) Colors() int {
+ // This is distinct from Colors(), as it will generally
+ // always be a small number. (<= 256)
+ func (t *tScreen) nColors() int {
+-	return t.ti.Colors
+-}
+-
+-func (t *tScreen) PollEvent() Event {
+-	select {
+-	case <-t.quit:
+-		return nil
+-	case ev := <-t.evch:
+-		return ev
++	if os.Getenv("NO_COLOR") != "" {
++		return 0
+ 	}
++	return t.ti.Colors
+ }
+ 
+ // vtACSNames is a map of bytes defined by terminfo that are used in
+ // the terminals Alternate Character Set to represent other glyphs.
+ // For example, the upper left corner of the box drawing set can be
+ // displayed by printing "l" while in the alternate character set.
+-// Its not quite that simple, since the "l" is the terminfo name,
++// It's not quite that simple, since the "l" is the terminfo name,
+ // and it may be necessary to use a different character based on
+ // the terminal implementation (or the terminal may lack support for
+ // this altogether).  See buildAcsMap below for detail.
+@@ -1025,590 +983,28 @@ func (t *tScreen) buildAcsMap() {
+ 	}
+ }
+ 
+-func (t *tScreen) PostEventWait(ev Event) {
+-	t.evch <- ev
+-}
+-
+-func (t *tScreen) PostEvent(ev Event) error {
+-	select {
+-	case t.evch <- ev:
+-		return nil
+-	default:
+-		return ErrEventQFull
+-	}
+-}
+-
+-func (t *tScreen) clip(x, y int) (int, int) {
+-	w, h := t.cells.Size()
+-	if x < 0 {
+-		x = 0
+-	}
+-	if y < 0 {
+-		y = 0
+-	}
+-	if x > w-1 {
+-		x = w - 1
+-	}
+-	if y > h-1 {
+-		y = h - 1
+-	}
+-	return x, y
+-}
+-
+-// buildMouseEvent returns an event based on the supplied coordinates and button
+-// state. Note that the screen's mouse button state is updated based on the
+-// input to this function (i.e. it mutates the receiver).
+-func (t *tScreen) buildMouseEvent(x, y, btn int) *EventMouse {
+-	// XTerm mouse events only report at most one button at a time,
+-	// which may include a wheel button.  Wheel motion events are
+-	// reported as single impulses, while other button events are reported
+-	// as separate press & release events.
+-
+-	button := ButtonNone
+-	mod := ModNone
+-
+-	// Mouse wheel has bit 6 set, no release events.  It should be noted
+-	// that wheel events are sometimes misdelivered as mouse button events
+-	// during a click-drag, so we debounce these, considering them to be
+-	// button press events unless we see an intervening release event.
+-	switch btn & 0x43 {
+-	case 0:
+-		button = Button1
+-		t.wasbtn = true
+-	case 1:
+-		button = Button3 // Note we prefer to treat right as button 2
+-		t.wasbtn = true
+-	case 2:
+-		button = Button2 // And the middle button as button 3
+-		t.wasbtn = true
+-	case 3:
+-		button = ButtonNone
+-		t.wasbtn = false
+-	case 0x40:
+-		if !t.wasbtn {
+-			button = WheelUp
+-		} else {
+-			button = Button1
+-		}
+-	case 0x41:
+-		if !t.wasbtn {
+-			button = WheelDown
+-		} else {
+-			button = Button1
+-		}
+-	}
+-
+-	if btn&0x4 != 0 {
+-		mod |= ModShift
+-	}
+-	if btn&0x8 != 0 {
+-		mod |= ModAlt
+-	}
+-	if btn&0x10 != 0 {
+-		mod |= ModCtrl
+-	}
+-
+-	// Some terminals will report mouse coordinates outside the
+-	// screen, especially with click-drag events.  Clip the coordinates
+-	// to the screen in that case.
+-	x, y = t.clip(x, y)
+-
+-	escseq := t.escbuf.String()
+-	t.escbuf.Reset()
+-	return NewEventMouse(x, y, button, mod, escseq)
+-}
+-
+-// parseSgrMouse attempts to locate an SGR mouse record at the start of the
+-// buffer.  It returns true, true if it found one, and the associated bytes
+-// be removed from the buffer.  It returns true, false if the buffer might
+-// contain such an event, but more bytes are necessary (partial match), and
+-// false, false if the content is definitely *not* an SGR mouse record.
+-func (t *tScreen) parseSgrMouse(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-	b := buf.Bytes()
+-
+-	var x, y, btn, state int
+-	dig := false
+-	neg := false
+-	motion := false
+-	i := 0
+-	val := 0
+-
+-	if t.escaped {
+-		state = 1
+-	}
+-
+-	for i = range b {
+-		switch b[i] {
+-		case '\x1b':
+-			if state != 0 {
+-				return false, false
+-			}
+-			state = 1
+-
+-		case '\x9b':
+-			if state != 0 {
+-				return false, false
+-			}
+-			state = 2
+-
+-		case '[':
+-			if state != 1 {
+-				return false, false
+-			}
+-			state = 2
+-
+-		case '<':
+-			if state != 2 {
+-				return false, false
+-			}
+-			val = 0
+-			dig = false
+-			neg = false
+-			state = 3
+-
+-		case '-':
+-			if state != 3 && state != 4 && state != 5 {
+-				return false, false
+-			}
+-			if dig || neg {
+-
+-				return false, false
+-			}
+-			neg = true // stay in state
+-
+-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+-			if state != 3 && state != 4 && state != 5 {
+-				return false, false
+-			}
+-			val *= 10
+-			val += int(b[i] - '0')
+-			dig = true // stay in state
+-
+-		case ';':
+-			if neg {
+-				val = -val
+-			}
+-			switch state {
+-			case 3:
+-				btn, val = val, 0
+-				neg, dig, state = false, false, 4
+-			case 4:
+-				x, val = val-1, 0
+-				neg, dig, state = false, false, 5
+-			default:
+-				return false, false
+-			}
+-
+-		case 'm', 'M':
+-			if state != 5 {
+-				return false, false
+-			}
+-			if neg {
+-				val = -val
+-			}
+-			y = val - 1
+-
+-			motion = (btn & 32) != 0
+-			btn &^= 32
+-			if b[i] == 'm' {
+-				// mouse release, clear all buttons
+-				btn |= 3
+-				btn &^= 0x40
+-				t.buttondn = false
+-			} else if motion {
+-				/*
+-				 * Some broken terminals appear to send
+-				 * mouse button one motion events, instead of
+-				 * encoding 35 (no buttons) into these events.
+-				 * We resolve these by looking for a non-motion
+-				 * event first.
+-				 */
+-				if !t.buttondn {
+-					btn |= 3
+-					btn &^= 0x40
+-				}
+-			} else {
+-				t.buttondn = true
+-			}
+-			// consume the event bytes
+-			for i >= 0 {
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-				i--
+-			}
+-			*evs = append(*evs, t.buildMouseEvent(x, y, btn))
+-			return true, true
+-		}
+-	}
+-
+-	// incomplete & inconclusve at this point
+-	return true, false
+-}
+-
+-// parseXtermMouse is like parseSgrMouse, but it parses a legacy
+-// X11 mouse record.
+-func (t *tScreen) parseXtermMouse(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-
+-	b := buf.Bytes()
+-
+-	state := 0
+-	btn := 0
+-	x := 0
+-	y := 0
+-
+-	if t.escaped {
+-		state = 1
+-	}
+-
+-	for i := range b {
+-		switch state {
+-		case 0:
+-			switch b[i] {
+-			case '\x1b':
+-				state = 1
+-			case '\x9b':
+-				state = 2
+-			default:
+-				return false, false
+-			}
+-		case 1:
+-			if b[i] != '[' {
+-				return false, false
+-			}
+-			state = 2
+-		case 2:
+-			if b[i] != 'M' {
+-				return false, false
+-			}
+-			state++
+-		case 3:
+-			btn = int(b[i])
+-			state++
+-		case 4:
+-			x = int(b[i]) - 32 - 1
+-			state++
+-		case 5:
+-			y = int(b[i]) - 32 - 1
+-			for i >= 0 {
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-				i--
+-			}
+-			*evs = append(*evs, t.buildMouseEvent(x, y, btn))
+-			return true, true
+-		}
+-	}
+-	return true, false
+-}
+-
+-func (t *tScreen) parseFunctionKey(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-	b := buf.Bytes()
+-	partial := false
+-	for e, k := range t.keycodes {
+-		esc := []byte(e)
+-		if (len(esc) == 1) && (esc[0] == '\x1b') {
+-			continue
+-		}
+-		if bytes.HasPrefix(b, esc) {
+-			// matched
+-			var r rune
+-			if len(esc) == 1 {
+-				r = rune(b[0])
+-			}
+-			mod := k.mod
+-			if t.escaped {
+-				mod |= ModAlt
+-				t.escaped = false
+-			}
+-			for i := 0; i < len(esc); i++ {
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-			}
+-			*evs = append(*evs, NewEventKey(k.key, r, mod, t.escbuf.String()))
+-			t.escbuf.Reset()
+-			return true, true
+-		}
+-		if bytes.HasPrefix(esc, b) {
+-			partial = true
+-		}
+-	}
+-	return partial, false
+-}
+-
+-func (t *tScreen) parseRune(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-	b := buf.Bytes()
+-	if b[0] >= ' ' && b[0] <= 0x7F {
+-		// printable ASCII easy to deal with -- no encodings
+-		mod := ModNone
+-		if t.escaped {
+-			mod = ModAlt
+-			t.escaped = false
+-		}
+-		by, _ := buf.ReadByte()
+-		t.escbuf.WriteByte(by)
+-		*evs = append(*evs, NewEventKey(KeyRune, rune(b[0]), mod, t.escbuf.String()))
+-		t.escbuf.Reset()
+-		return true, true
+-	}
+-
+-	if b[0] < 0x80 {
+-		// Low numbered values are control keys, not runes.
+-		return false, false
+-	}
+-
+-	utfb := make([]byte, 12)
+-	for l := 1; l <= len(b); l++ {
+-		t.decoder.Reset()
+-		nout, nin, e := t.decoder.Transform(utfb, b[:l], true)
++func (t *tScreen) scanInput(buf *bytes.Buffer) {
++	for buf.Len() > 0 {
++		utf := make([]byte, min(8, max(buf.Len()*2, 128)))
++		nOut, nIn, e := t.decoder.Transform(utf, buf.Bytes(), true)
++		_ = buf.Next(nIn)
++		t.input.ScanUTF8(utf[:nOut])
+ 		if e == transform.ErrShortSrc {
+-			continue
+-		}
+-		if nout != 0 {
+-			r, _ := utf8.DecodeRune(utfb[:nout])
+-			if r != utf8.RuneError {
+-				mod := ModNone
+-				if t.escaped {
+-					mod = ModAlt
+-					t.escaped = false
+-				}
+-				*evs = append(*evs, NewEventKey(KeyRune, r, mod, t.escbuf.String()))
+-				t.escbuf.Reset()
+-			}
+-			for nin > 0 {
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-				nin--
+-			}
+-			return true, true
+-		}
+-	}
+-	// Looks like potential escape
+-	return true, false
+-}
+-
+-// This function interprets a block of characters without escapes as a paste
+-// Generally the terminal will only send large blocks of text if a paste is
+-// occurring, though it may send small blocks of characters together if the user
+-// is typing quickly
+-// We set a threshold of 8 bytes before making the block into a paste
+-func (t *tScreen) parsePaste(buf *bytes.Buffer, evs *[]Event) bool {
+-	b := buf.Bytes()
+-
+-	if b[0] != '\x1b' {
+-		esci := bytes.IndexByte(b, '\x1b')
+-		if esci != -1 {
+-			b = b[:esci]
+-		}
+-		if len(b) > 1 {
+-			for i := 0; i < len(b); i++ {
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-			}
+-			str := string(bytes.Replace(b, []byte{'\r'}, []byte{'\n'}, -1))
+-			*evs = append(*evs, NewEventPaste(str, t.escbuf.String()))
+-			t.escbuf.Reset()
+-			return true
+-		}
+-	}
+-	return false
+-}
+-
+-func (t *tScreen) parseRegisteredRawSeq(buf *bytes.Buffer, evs *[]Event) bool {
+-	b := buf.Bytes()
+-
+-	if b[0] == '\x1b' && len(t.rawseq) > 0 {
+-		strb := string(b)
+-		for _, r := range t.rawseq {
+-			if strings.HasPrefix(strb, r) {
+-				// a registered raw sequence matched the prefix
+-				*evs = append(*evs, NewEventRaw(r))
+-				t.escbuf.Reset()
+-				for i := 0; i < len(r); i++ {
+-					buf.ReadByte()
+-				}
+-				return true
+-			}
+-		}
+-	}
+-	return false
+-}
+-
+-func (t *tScreen) parseOSC52Paste(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-	str := buf.String()
+-	b := buf.Bytes()
+-
+-	prefixLen := len(pasteOSC52Begin) + 2
+-	if strings.HasPrefix(str, pasteOSC52Begin) || strings.HasPrefix(pasteOSC52Begin, str) {
+-		idx := strings.Index(str, pasteOSC52End)
+-		log.Println(b, idx, len(str))
+-		if idx >= prefixLen {
+-			// OSC52 paste has ended
+-			payload := buf.Next(idx)[prefixLen:]
+-			buf.Next(len(pasteOSC52End))
+-			data := make([]byte, len(payload))
+-			n, err := base64.StdEncoding.Decode(data, payload)
+-			data = data[:n]
+-
+-			t.escbuf.Write(b)
+-
+-			if err != nil {
+-				// discard the paste since it is invalid
+-				return true, true
+-			}
+-
+-			*evs = append(*evs, NewEventPaste(string(data), t.escbuf.String()))
+-			t.escbuf.Reset()
+-			return true, true
+-		}
+-		// More still coming
+-		return true, false
+-	}
+-
+-	return false, false
+-}
+-
+-func (t *tScreen) parseBracketedPaste(buf *bytes.Buffer, evs *[]Event) (bool, bool) {
+-	// Replace all carriage returns with newlines
+-	str := strings.Replace(buf.String(), "\r", "\n", -1)
+-	if strings.HasPrefix(str, pasteBegin) || strings.HasPrefix(pasteBegin, str) {
+-		idx := strings.Index(str, pasteEnd)
+-		// The bracketed paste has started
+-		if idx != -1 && idx >= len(pasteBegin) {
+-			// The bracketed paste has ended
+-			// Strip out the start and end sequences
+-			t.escbuf.Write(buf.Next(idx + len(pasteEnd)))
+-			text := str[len(pasteBegin):idx]
+-			*evs = append(*evs, NewEventPaste(text, t.escbuf.String()))
+-			t.escbuf.Reset()
+-			return true, true
+-		}
+-		// There is still more coming
+-		return true, false
+-	}
+-	return false, false
+-}
+-
+-func (t *tScreen) scanInput(buf *bytes.Buffer, expire bool) {
+-	evs := t.collectEventsFromInput(buf, expire)
+-
+-	for _, ev := range evs {
+-		switch ev.(type) {
+-		case *EventMouse:
+-			t.PostEvent(ev)
+-		default:
+-			t.PostEventWait(ev)
++			return
+ 		}
+ 	}
+ }
+ 
+-// Return an array of Events extracted from the supplied buffer. This is done
+-// while holding the screen's lock - the events can then be queued for
+-// application processing with the lock released.
+-func (t *tScreen) collectEventsFromInput(buf *bytes.Buffer, expire bool) []Event {
+-	res := make([]Event, 0, 20)
+-
+-	t.Lock()
+-	defer t.Unlock()
+-
+-	for {
+-		b := buf.Bytes()
+-		if len(b) == 0 {
+-			buf.Reset()
+-			return res
+-		}
+-
+-		partials := 0
+-
+-		if t.parseRegisteredRawSeq(buf, &res) {
+-			continue
+-		}
+-
+-		if t.paste && t.parsePaste(buf, &res) {
+-			continue
+-		}
+-
+-		if part, comp := t.parseOSC52Paste(buf, &res); comp {
+-			continue
+-		} else if part {
+-			partials++
+-		}
+-
+-		if part, comp := t.parseBracketedPaste(buf, &res); comp {
+-			continue
+-		} else if part {
+-			partials++
+-		}
+-
+-		if part, comp := t.parseRune(buf, &res); comp {
+-			continue
+-		} else if part {
+-			partials++
+-		}
+-
+-		if part, comp := t.parseFunctionKey(buf, &res); comp {
+-			continue
+-		} else if part {
+-			partials++
+-		}
+-
+-		// Only parse mouse records if this term claims to have
+-		// mouse support
+-
+-		if t.ti.Mouse != "" {
+-			if part, comp := t.parseXtermMouse(buf, &res); comp {
+-				continue
+-			} else if part {
+-				partials++
+-			}
+-
+-			if part, comp := t.parseSgrMouse(buf, &res); comp {
+-				continue
+-			} else if part {
+-				partials++
+-			}
+-		}
+-
+-		if partials == 0 || expire {
+-			if b[0] == '\x1b' {
+-				if len(b) == 1 {
+-					res = append(res, NewEventKey(KeyEsc, 0, ModNone, "\x1b"))
+-					t.escbuf.Reset()
+-					t.escaped = false
+-				} else {
+-					t.escaped = true
+-				}
+-				by, _ := buf.ReadByte()
+-				t.escbuf.WriteByte(by)
+-				continue
+-			}
+-			// Nothing was going to match, or we timed out
+-			// waiting for more data -- just deliver the characters
+-			// to the app & let them sort it out.  Possibly we
+-			// should only do this for control characters like ESC.
+-			by, _ := buf.ReadByte()
+-			t.escbuf.WriteByte(by)
+-			res = append(res, NewEventRaw(t.escbuf.String()))
+-			t.escbuf.Reset()
+-			continue
+-		}
+-
+-		// well we have some partial data, wait until we get
+-		// some more
+-		break
+-	}
+-
+-	return res
+-}
+-
+-func (t *tScreen) mainLoop() {
++func (t *tScreen) mainLoop(stopQ chan struct{}) {
++	defer t.wg.Done()
+ 	buf := &bytes.Buffer{}
+-	t.escbuf = &bytes.Buffer{}
+ 	for {
+ 		select {
+-		case <-t.quit:
+-			close(t.indoneq)
++		case <-stopQ:
+ 			return
+-		case <-t.sigwinch:
++		case <-t.quit:
++			return
++		case <-t.resizeQ:
+ 			t.Lock()
+ 			t.cx = -1
+ 			t.cy = -1
+@@ -1617,54 +1013,41 @@ func (t *tScreen) mainLoop() {
+ 			t.draw()
+ 			t.Unlock()
+ 			continue
+-		case <-t.keytimer.C:
+-			// If the timer fired, and the current time
+-			// is after the expiration of the escape sequence,
+-			// then we assume the escape sequence reached it's
+-			// conclusion, and process the chunk independently.
+-			// This lets us detect conflicts such as a lone ESC.
+-			if buf.Len() > 0 {
+-				if time.Now().After(t.keyexpire) {
+-					t.scanInput(buf, true)
+-				}
+-			}
+-			if buf.Len() > 0 {
+-				if !t.keytimer.Stop() {
+-					select {
+-					case <-t.keytimer.C:
+-					default:
+-					}
+-				}
+-				t.keytimer.Reset(time.Millisecond * 50)
+-			}
+ 		case chunk := <-t.keychan:
+ 			buf.Write(chunk)
+-			t.keyexpire = time.Now().Add(time.Millisecond * 50)
+-			t.scanInput(buf, false)
+-			if !t.keytimer.Stop() {
+-				select {
+-				case <-t.keytimer.C:
+-				default:
+-				}
+-			}
+-			if buf.Len() > 0 {
+-				t.keytimer.Reset(time.Millisecond * 50)
+-			}
++			t.scanInput(buf)
+ 		}
+ 	}
+ }
+ 
+-func (t *tScreen) inputLoop() {
++func (t *tScreen) inputLoop(stopQ chan struct{}) {
++
++	defer t.wg.Done()
+ 	for {
+-		chunk := make([]byte, 4096)
+-		n, e := t.in.Read(chunk)
++		select {
++		case <-stopQ:
++			return
++		default:
++		}
++		chunk := make([]byte, 128)
++		n, e := t.tty.Read(chunk)
+ 		switch e {
+ 		case nil:
+ 		default:
+-			t.PostEvent(NewEventError(e))
++			t.Lock()
++			running := t.running
++			t.Unlock()
++			if running {
++				select {
++				case t.eventQ <- NewEventError(e):
++				case <-t.quit:
++				}
++			}
+ 			return
+ 		}
+-		t.keychan <- chunk[:n]
++		if n > 0 {
++			t.keychan <- chunk[:n]
++		}
+ 	}
+ }
+ 
+@@ -1701,11 +1084,9 @@ func (t *tScreen) CanDisplay(r rune, checkFallbacks bool) bool {
+ 
+ 	if enc := t.encoder; enc != nil {
+ 		nb := make([]byte, 6)
+-		ob := make([]byte, 6)
+-		num := utf8.EncodeRune(ob, r)
+ 
+ 		enc.Reset()
+-		dst, _, err := enc.Transform(nb, ob[:num], true)
++		dst, _, err := enc.Transform(nb, []byte(string(r)), true)
+ 		if dst != 0 && err == nil && nb[0] != '\x1A' {
+ 			return true
+ 		}
+@@ -1728,53 +1109,201 @@ func (t *tScreen) HasMouse() bool {
+ 	return len(t.mouse) != 0
+ }
+ 
+-func (t *tScreen) HasKey(k Key) bool {
+-	if k == KeyRune {
+-		return true
++func (t *tScreen) HasKey(_ Key) bool {
++	// We always return true
++	return true
++}
++
++func (t *tScreen) RegisterRawSeq(string) {}
++func (t *tScreen) UnregisterRawSeq(string) {}
++
++func (t *tScreen) SetSize(w, h int) {
++	if t.setWinSize != "" {
++		t.TPuts(t.ti.TParm(t.setWinSize, w, h))
+ 	}
+-	return t.keyexist[k]
++	t.cells.Invalidate()
++	t.resize()
+ }
+ 
+ func (t *tScreen) Resize(int, int, int, int) {}
+ 
+-func (t *tScreen) GetClipboard(register string) error {
+-	if len(register) <= 0 {
+-		return errors.New("No register provided")
+-	}
+-
+-	r := register[0]
+-
+-	if r != 'c' && r != 'p' {
+-		return errors.New("Invalid register")
+-	}
+-
+-	t.TPuts(fmt.Sprintf(pasteGet, r))
+-
++func (t *tScreen) Suspend() error {
++	t.disengage()
+ 	return nil
+ }
+ 
+-func (t *tScreen) SetClipboard(text, register string) error {
+-	if len(register) <= 0 {
+-		return errors.New("No register provided")
+-	}
+-
+-	r := register[0]
+-
+-	if r != 'c' && r != 'p' {
+-		return errors.New("Invalid register")
+-	}
+-
+-	t.TPuts(fmt.Sprintf(pasteClear, r))
+-
+-	var err error = nil
+-	// Maximum paste length for OSC 52
+-	if len(text) >= 74994 {
+-		err = errors.New("Text truncated: exceeds 74994 bytes")
+-	}
+-
+-	str := base64.StdEncoding.EncodeToString([]byte(text))
+-
+-	t.TPuts(fmt.Sprintf(pasteSet, r, str))
+-
+-	return err
++func (t *tScreen) Resume() error {
++	return t.engage()
+ }
++
++func (t *tScreen) Tty() (Tty, bool) {
++	return t.tty, true
++}
++
++// engage is used to place the terminal in raw mode and establish screen size, etc.
++// Think of this is as tcell "engaging" the clutch, as it's going to be driving the
++// terminal interface.
++func (t *tScreen) engage() error {
++	t.Lock()
++	defer t.Unlock()
++	if t.tty == nil {
++		return ErrNoScreen
++	}
++	t.tty.NotifyResize(func() {
++		select {
++		case t.resizeQ <- true:
++		default:
++		}
++	})
++	if t.running {
++		return errors.New("already engaged")
++	}
++	if err := t.tty.Start(); err != nil {
++		return err
++	}
++	t.running = true
++	if ws, err := t.tty.WindowSize(); err == nil && ws.Width != 0 && ws.Height != 0 {
++		t.cells.Resize(ws.Width, ws.Height)
++	}
++	stopQ := make(chan struct{})
++	t.stopQ = stopQ
++	t.enableMouse(t.mouseFlags)
++	t.enablePasting(t.pasteEnabled)
++	if t.focusEnabled {
++		t.enableFocusReporting()
++	}
++	ti := t.ti
++	if os.Getenv("TCELL_ALTSCREEN") != "disable" {
++		// Technically this may not be right, but every terminal we know about
++		// (even Wyse 60) uses this to enter the alternate screen buffer, and
++		// possibly save and restore the window title and/or icon.
++		// (In theory there could be terminals that don't support X,Y cursor
++		// positions without a setup command, but we don't support them.)
++		t.TPuts(ti.EnterCA)
++		t.TPuts(t.saveTitle)
++	}
++	t.TPuts(ti.EnterKeypad)
++	t.TPuts(ti.HideCursor)
++	t.TPuts(ti.EnableAcs)
++	t.TPuts(ti.DisableAutoMargin)
++	t.TPuts(ti.Clear)
++	if t.title != "" && t.setTitle != "" {
++		t.TPuts(t.ti.TParm(t.setTitle, t.title))
++	}
++	t.TPuts(t.enableCsiU)
++
++	t.wg.Add(2)
++	go t.inputLoop(stopQ)
++	go t.mainLoop(stopQ)
++	return nil
++}
++
++// disengage is used to release the terminal back to support from the caller.
++// Think of this as tcell disengaging the clutch, so that another application
++// can take over the terminal interface.  This restores the TTY mode that was
++// present when the application was first started.
++func (t *tScreen) disengage() {
++
++	t.Lock()
++	if !t.running {
++		t.Unlock()
++		return
++	}
++
++	t.running = false
++	stopQ := t.stopQ
++	close(stopQ)
++	_ = t.tty.Drain()
++	t.Unlock()
++
++	t.tty.NotifyResize(nil)
++	// wait for everything to shut down
++	t.wg.Wait()
++
++	// shutdown the screen and disable special modes (e.g. mouse and bracketed paste)
++	ti := t.ti
++	t.cells.Resize(0, 0)
++	t.TPuts(ti.ShowCursor)
++	if t.cursorStyles != nil && t.cursorStyle != CursorStyleDefault {
++		t.TPuts(t.cursorStyles[CursorStyleDefault])
++	}
++	if t.cursorFg != "" && t.cursorColor.Valid() {
++		t.TPuts(t.cursorFg)
++	}
++	t.TPuts(ti.ResetFgBg)
++	t.TPuts(ti.AttrOff)
++	t.TPuts(ti.ExitKeypad)
++	t.TPuts(ti.EnableAutoMargin)
++	t.TPuts(t.disableCsiU)
++	if os.Getenv("TCELL_ALTSCREEN") != "disable" {
++		if t.restoreTitle != "" {
++			t.TPuts(t.restoreTitle)
++		}
++		t.TPuts(ti.Clear) // only needed if ExitCA is empty
++		t.TPuts(ti.ExitCA)
++	}
++	t.enableMouse(0)
++	t.enablePasting(false)
++	t.disableFocusReporting()
++
++	_ = t.tty.Stop()
++}
++
++// Beep emits a beep to the terminal.
++func (t *tScreen) Beep() error {
++	t.writeString(string(byte(7)))
++	return nil
++}
++
++// finalize is used to at application shutdown, and restores the terminal
++// to it's initial state.  It should not be called more than once.
++func (t *tScreen) finalize() {
++	t.disengage()
++	_ = t.tty.Close()
++}
++
++func (t *tScreen) StopQ() <-chan struct{} {
++	return t.quit
++}
++
++func (t *tScreen) EventQ() chan Event {
++	return t.eventQ
++}
++
++func (t *tScreen) GetCells() *CellBuffer {
++	return &t.cells
++}
++
++func (t *tScreen) SetTitle(title string) {
++	t.Lock()
++	t.title = title
++	if t.setTitle != "" && t.running {
++		t.TPuts(t.ti.TParm(t.setTitle, title))
++	}
++	t.Unlock()
++}
++
++func (t *tScreen) SetClipboard(data []byte) {
++	// Post binary data to the system clipboard.  It might be UTF-8, it might not be.
++	t.Lock()
++	if t.setClipboard != "" {
++		encoded := base64.StdEncoding.EncodeToString(data)
++		t.TPuts(t.ti.TParm(t.setClipboard, encoded))
++	}
++	t.Unlock()
++}
++
++func (t *tScreen) GetClipboard() {
++	t.Lock()
++	if t.setClipboard != "" {
++		t.TPuts(t.ti.TParm(t.setClipboard, "?"))
++	}
++	t.Unlock()
++}
++func (t *tScreen) SetPaste(enable bool) {
++	t.Lock()
++	t.pasteEnabled = enable
++	t.enablePasting(enable)
++	t.Unlock()
++}
++

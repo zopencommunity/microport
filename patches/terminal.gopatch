@@ -1,0 +1,20 @@
+diff --git i/ioctl_posix.go w/ioctl_posix.go
+index beb54eb..a8fec27 100644
+--- i/ioctl_posix.go
++++ w/ioctl_posix.go
+@@ -1,4 +1,4 @@
+-// +build linux darwin dragonfly solaris openbsd netbsd freebsd
++// +build linux darwin dragonfly solaris openbsd netbsd freebsd zos
+ 
+ package terminal
+ 
+diff --git i/vt_posix.go w/vt_posix.go
+index a594eb6..d031207 100644
+--- i/vt_posix.go
++++ w/vt_posix.go
+@@ -1,4 +1,4 @@
+-//go:build linux || darwin || dragonfly || solaris || openbsd || netbsd || freebsd
++//go:build linux || darwin || dragonfly || solaris || openbsd || netbsd || freebsd || zos
+ // +build linux darwin dragonfly solaris openbsd netbsd freebsd
+ 
+ package terminal

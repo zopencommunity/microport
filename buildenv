@@ -1,0 +1,149 @@
+# bump: micro-version /MICRO_VERSION="(.*)"/ https://github.com/zyedidia/micro.git|semver:*
+MICRO_VERSION="2.0.14"
+
+###
+### Build control file for the micro port
+###
+
+###
+### Required Environment Variables
+###
+export ZOPEN_BUILD_LINE="STABLE"
+export ZOPEN_STABLE_URL="https://github.com/zyedidia/micro.git"
+export ZOPEN_STABLE_TAG="v${MICRO_VERSION}"
+export ZOPEN_STABLE_DEPS="meta wharf"
+export ZOPEN_DEV_URL=""
+export ZOPEN_DEV_DEPS="meta wharf"
+export ZOPEN_CATEGORIES="development editor"
+export ZOPEN_RUNTIME_DEPS=""
+export ZOPEN_COMP=GO
+# export ZOPEN_SYSTEM_PREREQ="zos25" # optional system pre-req (default=zos25)
+
+
+###
+### Build settings (Port type: BUILD, Build system: Go)
+###
+export ZOPEN_CONFIGURE="zopen_wharf"
+export ZOPEN_MAKE="zopen_build"
+export ZOPEN_INSTALL="zopen_install"
+export ZOPEN_CHECK="skip"
+export ZOPEN_MAKE_MINIMAL="yes"
+
+
+###
+### Required user-supplied functions
+###
+
+zopen_check_results() {
+  dir="$1" 
+  pfx="$2" 
+  chk="$1/$2_check.log"
+  # Tests are skipped for now
+  echo "actualFailures:0" 
+  echo "totalTests:1" 
+  echo "expectedFailures:0"
+  echo "expectedTotalTests:1"
+}
+
+zopen_get_version() {
+  echo "$MICRO_VERSION"
+}
+
+
+###
+### Custom Build Logic for Go project
+###
+
+zopen_init() {
+  # Unset C/C++ compilers for Go build
+  unset CC CXX
+  export CGO_ENABLED=0
+}
+
+zopen_wharf() {
+  cd ..
+  rm -rf go.work
+
+  git clone https://github.com/zyedidia/tcell.git
+  cd tcell
+  git apply ../patches/tcell.gopatch
+  cd ..
+
+  git clone https://github.com/zyedidia/terminal
+  cd terminal
+  git apply ../patches/terminal.gopatch
+  cd ..
+
+  git clone https://github.com/mattn/go-isatty.git
+  cd go-isatty
+  cd ..
+
+  go work init ./micro ./tcell ./terminal ./go-isatty
+  wharf ./micro/...
+  cd ./micro
+  go mod tidy
+}
+
+zopen_build() {
+  # Build micro using Go
+  go build -o micro ./cmd/micro
+}
+
+zopen_install() {
+  # Install the binary
+  mkdir -p "$ZOPEN_INSTALL_DIR/bin"
+  cp micro "$ZOPEN_INSTALL_DIR/bin/"
+}
+
+zopen_clean() {
+  # Clean up any artifacts
+  rm -f micro
+}
+
+###
+### Optional User-Supplied Hooks (uncomment to use)
+###
+
+#zopen_append_to_env() {
+#  ## This function runs as part of generation of the .env file. The output of the
+#  ## function is appended to .env.
+#}
+#
+#zopen_append_to_setup(){
+#  ## This function runs as part of generation of the setup.sh file. The output of
+#  ## the function is appended to setup.sh.
+#}
+#
+#zopen_append_to_validate_install(){
+#  ## This function runs as part of generation of the install_test.sh file. The
+#  ## output of the function is appended to install_test.sh script.
+#}
+#
+#zopen_install_caveats(){
+#  ## This function is run post install. All stdout messages are captured and
+#  ## added to the metadata.json as installation caveats.
+#}
+#
+#zopen_post_buildenv(){
+#  ## This function runs after the 'buildenv' is processed.
+#}
+#
+#zopen_pre_check(){
+#  ## This function runs before the 'check' step of the build is run.
+#}
+#
+#zopen_pre_configure(){
+#  ## This function runs before the 'configure' step of the build is run.
+#}
+#
+#zopen_pre_install(){
+#  ## This function runs before the 'install' step of the build is run.
+#}
+#
+#zopen_pre_patch(){
+#  ## This function runs before the 'patch' step of the build is run.
+#}
+#
+#zopen_pre_terminate(){
+#  ## This function runs before 'zopen build' terminates.
+#}

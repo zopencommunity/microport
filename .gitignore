@@ -1,0 +1,8 @@
+# Ignore source directories created by zopen build
+micro-*/
+
+# Ignore build artifacts
+install/
+log.STABLE/
+log.DEV/
+.zoslib_hooks/
