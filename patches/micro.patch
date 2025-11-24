@@ -1,0 +1,113 @@
+diff --git i/cmd/micro/micro.go w/cmd/micro/micro.go
+index 4445a34..604dcbe 100644
+--- i/cmd/micro/micro.go
++++ w/cmd/micro/micro.go
+@@ -3,7 +3,6 @@ package main
+ import (
+ 	"flag"
+ 	"fmt"
+-	"io"
+ 	"io/ioutil"
+ 	"log"
+ 	"os"
+@@ -457,19 +456,6 @@ func DoEvent() {
+ 	if e, ok := event.(*tcell.EventError); ok {
+ 		log.Println("tcell event error: ", e.Error())
+ 
+-		if e.Err() == io.EOF {
+-			// shutdown due to terminal closing/becoming inaccessible
+-			for _, b := range buffer.OpenBuffers {
+-				if !b.Modified() {
+-					b.Fini()
+-				}
+-			}
+-
+-			if screen.Screen != nil {
+-				screen.Screen.Fini()
+-			}
+-			os.Exit(0)
+-		}
+ 		return
+ 	}
+ 
+diff --git i/go.mod w/go.mod
+index fb782c5..c7d93c4 100644
+--- i/go.mod
++++ w/go.mod
+@@ -14,7 +14,7 @@ require (
+ 	github.com/zyedidia/clipper v0.1.1
+ 	github.com/zyedidia/glob v0.0.0-20170209203856-dd4023a66dc3
+ 	github.com/zyedidia/json5 v0.0.0-20200102012142-2da050b1a98d
+-	github.com/zyedidia/tcell/v2 v2.0.10 // indirect
++	github.com/zyedidia/tcell/v2 v2.0.10
+ 	github.com/zyedidia/terminal v0.0.0-20230315200948-4b3bcf6dddef
+ 	golang.org/x/text v0.3.8
+ 	gopkg.in/yaml.v2 v2.2.8
+diff --git i/go.sum w/go.sum
+index ff815cd..2a81b5d 100644
+--- i/go.sum
++++ w/go.sum
+@@ -54,14 +54,6 @@ github.com/zyedidia/json5 v0.0.0-20200102012142-2da050b1a98d h1:zmDMkh22zXOB7gz8
+ github.com/zyedidia/json5 v0.0.0-20200102012142-2da050b1a98d/go.mod h1:NDJSTTYWivnza6zkRapeX2/LwhKPEMQ7bJxqgDVT78I=
+ github.com/zyedidia/poller v1.0.1 h1:Tt9S3AxAjXwWGNiC2TUdRJkQDZSzCBNVQ4xXiQ7440s=
+ github.com/zyedidia/poller v1.0.1/go.mod h1:vZXJOHGDcuK08GXhF6IAY0ZFd2WcgOR5DOTp84Uk5eE=
+-github.com/zyedidia/tcell/v2 v2.0.9 h1:FxXRkE62N0GPHES7EMLtp2rteYqC9r1kVid8vJN1kOE=
+-github.com/zyedidia/tcell/v2 v2.0.9/go.mod h1:i4NNlquIQXFeNecrOgxDQQJdu+7LmTi3g62asvmwUws=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20221007181625-f562052bccb8 h1:53ULv4mmLyQDnqbjVxanckP57WSreWHwTmlLJrJEutY=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20221007181625-f562052bccb8/go.mod h1:i4NNlquIQXFeNecrOgxDQQJdu+7LmTi3g62asvmwUws=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20230320201625-54f6acdada4a h1:W4TWa++Wk6uRGxZoxr2nPX1TpIEl+Wxv0mTtocG4TYc=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20230320201625-54f6acdada4a/go.mod h1:i4NNlquIQXFeNecrOgxDQQJdu+7LmTi3g62asvmwUws=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20230831153116-061c5b2c7260 h1:SCAmAacT5BxZsmOFdFy5zwwi6nj1MjA60gydjKdTgXo=
+-github.com/zyedidia/tcell/v2 v2.0.10-0.20230831153116-061c5b2c7260/go.mod h1:i4NNlquIQXFeNecrOgxDQQJdu+7LmTi3g62asvmwUws=
+ github.com/zyedidia/tcell/v2 v2.0.10 h1:6fbbYAx/DYc9A//4jU1OeBrxtc9qJxYCZXCtGQbtTWU=
+ github.com/zyedidia/tcell/v2 v2.0.10/go.mod h1:i4NNlquIQXFeNecrOgxDQQJdu+7LmTi3g62asvmwUws=
+ github.com/zyedidia/terminal v0.0.0-20230315200948-4b3bcf6dddef h1:LeB4Qs0Tss4r/Qh8pfsTTqagDYHysfKJLYzAH3MVfu0=
+diff --git i/internal/action/actions_posix.go w/internal/action/actions_posix.go
+index 15bc0aa..7d20ac6 100644
+--- i/internal/action/actions_posix.go
++++ w/internal/action/actions_posix.go
+@@ -1,4 +1,4 @@
+-// +build linux darwin dragonfly solaris openbsd netbsd freebsd
++// +build linux darwin dragonfly solaris openbsd netbsd freebsd zos
+ 
+ package action
+ 
+diff --git i/internal/clipboard/terminal.go w/internal/clipboard/terminal.go
+index e3a0528..5c001a7 100644
+--- i/internal/clipboard/terminal.go
++++ w/internal/clipboard/terminal.go
+@@ -1,11 +1,6 @@
+ package clipboard
+ 
+ import (
+-	"errors"
+-	"time"
+-
+-	"github.com/zyedidia/micro/v2/internal/screen"
+-	"github.com/zyedidia/tcell/v2"
+ )
+ 
+ type terminalClipboard struct{}
+@@ -13,7 +8,7 @@ type terminalClipboard struct{}
+ var terminal terminalClipboard
+ 
+ func (t terminalClipboard) read(reg string) (string, error) {
+-	screen.Screen.GetClipboard(reg)
++	/*screen.Screen.GetClipboard(reg)
+ 	// wait at most 200ms for response
+ 	for {
+ 		select {
+@@ -25,9 +20,11 @@ func (t terminalClipboard) read(reg string) (string, error) {
+ 		case <-time.After(200 * time.Millisecond):
+ 			return "", errors.New("No clipboard received from terminal")
+ 		}
+-	}
++	}*/
++	return "", nil;
+ }
+ 
+ func (t terminalClipboard) write(text, reg string) error {
+-	return screen.Screen.SetClipboard(text, reg)
++	//return screen.Screen.SetClipboard(text, reg)
++	return nil;
+ }
