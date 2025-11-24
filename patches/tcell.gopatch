@@ -1,6 +1,6 @@
-diff --git i/attr.go w/attr.go
+diff --git c/attr.go w/attr.go
 index 8b1eab7..05af5e5 100644
---- i/attr.go
+--- c/attr.go
 +++ w/attr.go
 @@ -1,4 +1,4 @@
 -// Copyright 2020 The TCell Authors
@@ -33,9 +33,9 @@ index 8b1eab7..05af5e5 100644
 +	AttrInvalid AttrMask = 1 << 31 // Mark the style or attributes invalid
 +	AttrNone    AttrMask = 0       // Just normal text.
  )
-diff --git i/cell.go w/cell.go
+diff --git c/cell.go w/cell.go
 index c7f8f1a..c139fbd 100644
---- i/cell.go
+--- c/cell.go
 +++ w/cell.go
 @@ -1,4 +1,4 @@
 -// Copyright 2019 The TCell Authors
@@ -331,9 +331,38 @@ index c7f8f1a..c139fbd 100644
  		c.width = 1
  	}
  }
-diff --git i/charset_stub.go w/charset_stub.go
+diff --git c/charset_plan9.go w/charset_plan9.go
+new file mode 100644
+index 0000000..959d181
+--- /dev/null
++++ w/charset_plan9.go
+@@ -0,0 +1,23 @@
++//go:build plan9
++// +build plan9
++
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++// Plan 9 uses UTF-8 system-wide, so we return "UTF-8" unconditionally.
++func getCharset() string {
++	return "UTF-8"
++}
+diff --git c/charset_stub.go w/charset_stub.go
 index c1c1594..829be2c 100644
---- i/charset_stub.go
+--- c/charset_stub.go
 +++ w/charset_stub.go
 @@ -1,4 +1,5 @@
 -// +build plan9 nacl
@@ -342,9 +371,9 @@ index c1c1594..829be2c 100644
  
  // Copyright 2015 The TCell Authors
  //
-diff --git i/charset_unix.go w/charset_unix.go
+diff --git c/charset_unix.go w/charset_unix.go
 index 2f07005..8bbf1f5 100644
---- i/charset_unix.go
+--- c/charset_unix.go
 +++ w/charset_unix.go
 @@ -38,7 +38,7 @@ func getCharset() string {
  	if i := strings.IndexRune(locale, '@'); i >= 0 {
@@ -355,9 +384,9 @@ index 2f07005..8bbf1f5 100644
  		locale = locale[i+1:]
  	} else {
  		// Default assumption, and on Linux we can see LC_ALL
-diff --git i/charset_windows.go w/charset_windows.go
+diff --git c/charset_windows.go w/charset_windows.go
 index 2400aa8..68e4982 100644
---- i/charset_windows.go
+--- c/charset_windows.go
 +++ w/charset_windows.go
 @@ -1,3 +1,4 @@
 +//go:build windows
@@ -371,9 +400,9 @@ index 2400aa8..68e4982 100644
 -	return "UTF-16"
 +	return "UTF-8"
  }
-diff --git i/color.go w/color.go
+diff --git c/color.go w/color.go
 index 8a13a07..904848e 100644
---- i/color.go
+--- c/color.go
 +++ w/color.go
 @@ -1,4 +1,4 @@
 -// Copyright 2020 The TCell Authors
@@ -752,9 +781,9 @@ index 8a13a07..904848e 100644
 +	// NOTE image/color.Color RGB values range is [0, 0xFFFF] as uint32
 +	return NewRGBColor(int32(r>>8), int32(g>>8), int32(b>>8))
 +}
-diff --git i/color_test.go w/color_test.go
+diff --git c/color_test.go w/color_test.go
 index a724f1f..cd63403 100644
---- i/color_test.go
+--- c/color_test.go
 +++ w/color_test.go
 @@ -1,4 +1,4 @@
 -// Copyright 2018 The TCell Authors
@@ -903,18 +932,18 @@ index a724f1f..cd63403 100644
 +		t.Errorf("Wrong style! fg %s bg %s", s1.fg.String(), s1.bg.String())
 +	}
 +}
-diff --git i/console_stub.go w/console_stub.go
+diff --git c/console_stub.go w/console_stub.go
 index fda2f09..6ff7e92 100644
---- i/console_stub.go
+--- c/console_stub.go
 +++ w/console_stub.go
 @@ -1,3 +1,4 @@
 +//go:build !windows
  // +build !windows
  
  // Copyright 2015 The TCell Authors
-diff --git i/console_win.go w/console_win.go
+diff --git c/console_win.go w/console_win.go
 index c946c02..e35d10c 100644
---- i/console_win.go
+--- c/console_win.go
 +++ w/console_win.go
 @@ -1,6 +1,7 @@
 +//go:build windows
@@ -2142,9 +2171,9 @@ index c946c02..e35d10c 100644
 +func (s *cScreen) StopQ() <-chan struct{} {
 +	return s.quit
 +}
-diff --git i/doc.go w/doc.go
+diff --git c/doc.go w/doc.go
 index b671961..690dd27 100644
---- i/doc.go
+--- c/doc.go
 +++ w/doc.go
 @@ -36,13 +36,12 @@
  //
@@ -2162,9 +2191,45 @@ index b671961..690dd27 100644
  // keys, and various other special keys.
 -//
  package tcell
-diff --git i/encoding.go w/encoding.go
+diff --git c/eastasian.go w/eastasian.go
+new file mode 100644
+index 0000000..56b9af6
+--- /dev/null
++++ w/eastasian.go
+@@ -0,0 +1,30 @@
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++import (
++	"os"
++	"strings"
++
++	"github.com/rivo/uniseg"
++)
++
++func init() {
++	if rw := strings.ToLower(os.Getenv("RUNEWIDTH_EASTASIAN")); rw == "1" || rw == "true" || rw == "yes" {
++		uniseg.EastAsianAmbiguousWidth = 2
++	} else {
++		uniseg.EastAsianAmbiguousWidth = 1
++	}
++}
+diff --git c/encoding.go w/encoding.go
 index 596a6e8..b7644c2 100644
---- i/encoding.go
+--- c/encoding.go
 +++ w/encoding.go
 @@ -1,4 +1,4 @@
 -// Copyright 2015 The TCell Authors
@@ -2231,9 +2296,43 @@ index 596a6e8..b7644c2 100644
  	// to a 7-bit ASCII encoding, if no other encoding can be found.
  	EncodingFallbackASCII
  
-diff --git i/errors.go w/errors.go
+diff --git c/encoding_test.go w/encoding_test.go
+new file mode 100644
+index 0000000..1eb9952
+--- /dev/null
++++ w/encoding_test.go
+@@ -0,0 +1,28 @@
++// Copyright 2022 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//	http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package tcell
++
++import (
++	"fmt"
++
++	"golang.org/x/text/encoding/simplifiedchinese"
++)
++
++func ExampleRegisterEncoding() {
++	RegisterEncoding("GBK", simplifiedchinese.GBK)
++	enc := GetEncoding("GBK")
++	glyph, _ := enc.NewDecoder().Bytes([]byte{0x82, 0x74})
++	fmt.Println(string(glyph))
++	// Output: 倀
++}
+diff --git c/errors.go w/errors.go
 index 666d8e4..fe05238 100644
---- i/errors.go
+--- c/errors.go
 +++ w/errors.go
 @@ -18,7 +18,7 @@ import (
  	"errors"
@@ -2256,9 +2355,9 @@ index 666d8e4..fe05238 100644
  func (ev *EventError) EscSeq() string {
  	return ev.err.Error()
  }
-diff --git i/event_test.go w/event_test.go
+diff --git c/event_test.go w/event_test.go
 index f8ede20..93ff4d8 100644
---- i/event_test.go
+--- c/event_test.go
 +++ w/event_test.go
 @@ -19,7 +19,7 @@ import (
  	"time"
@@ -2312,9 +2411,47 @@ index f8ede20..93ff4d8 100644
 +		t.Errorf("Modifiers should be control")
 +	}
 +}
-diff --git i/go.mod w/go.mod
+diff --git c/focus.go w/focus.go
+new file mode 100644
+index 0000000..308e7ce
+--- /dev/null
++++ w/focus.go
+@@ -0,0 +1,32 @@
++// Copyright 2023 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++// EventFocus is a focus event. It is sent when the terminal window (or tab)
++// gets or loses focus.
++type EventFocus struct {
++	*EventTime
++
++	// True if the window received focus, false if it lost focus
++	Focused bool
++}
++
++func (ev *EventFocus) EscSeq() string {
++	return ""
++}
++
++func NewEventFocus(focused bool) *EventFocus {
++	return &EventFocus{Focused: focused}
++}
+diff --git c/go.mod w/go.mod
 index 3b06906..93400fc 100644
---- i/go.mod
+--- c/go.mod
 +++ w/go.mod
 @@ -1,13 +1,28 @@
  module github.com/zyedidia/tcell/v2
@@ -2350,9 +2487,9 @@ index 3b06906..93400fc 100644
 +)
 +
 +go 1.24.0
-diff --git i/go.sum w/go.sum
+diff --git c/go.sum w/go.sum
 index bdc40ef..5a9ecd3 100644
---- i/go.sum
+--- c/go.sum
 +++ w/go.sum
 @@ -1,14 +1,59 @@
  github.com/gdamore/encoding v1.0.0 h1:+7OoQ1Bc6eTm5niUzBa0Ctsh6JbMW6Ra+YNuAtDBdko=
@@ -2414,9 +2551,884 @@ index bdc40ef..5a9ecd3 100644
 +golang.org/x/tools v0.6.0/go.mod h1:Xwgl3UAJ/d3gWutnCtw505GrjyAbvKui8lOU390QaIU=
 +golang.org/x/tools v0.38.0/go.mod h1:yEsQ/d/YK8cjh0L6rZlY8tgtlKiBNTL14pGDJPJpYQs=
 +golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
-diff --git i/key.go w/key.go
+diff --git c/input.go w/input.go
+new file mode 100644
+index 0000000..e56a360
+--- /dev/null
++++ w/input.go
+@@ -0,0 +1,869 @@
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++// This file describes a generic VT input processor.  It parses key sequences,
++// (input bytes) and loads them into events.  It expects UTF-8 or UTF-16 as the input
++// feed, along with ECMA-48 sequences.  The assumption here is that all potential
++// key sequences are unambiguous between terminal variants (analysis of extant terminfo
++// data appears to support this conjecture). This allows us to implement  this once,
++// in the most efficient and terminal-agnostic way possible.
++//
++// There is unfortunately *one* conflict, with aixterm, for CSI-P - which is KeyDelete
++// in aixterm, but F1 in others.
++
++package tcell
++
++import (
++	"encoding/base64"
++	"os"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++	"unicode/utf16"
++	"unicode/utf8"
++)
++
++type inpState int
++
++const (
++	inpStateInit = inpState(iota)
++	inpStateUtf
++	inpStateEsc
++	inpStateCsi // control sequence introducer
++	inpStateOsc // operating system command
++	inpStateDcs // device control string
++	inpStateSos // start of string (unused)
++	inpStatePm  // privacy message (unused)
++	inpStateApc // application program command
++	inpStateSt  // string terminator
++	inpStateSs2 // single shift 2
++	inpStateSs3 // single shift 3
++	inpStateLFK // linux F-key (not ECMA-48 compliant - bogus CSI)
++)
++
++type InputProcessor interface {
++	ScanUTF8([]byte)
++	ScanUTF16([]uint16)
++	SetSize(rows, cols int)
++}
++
++func NewInputProcessor(eq chan<- Event) InputProcessor {
++	return &inputProcessor{
++		evch: eq,
++		buf:  make([]rune, 0, 128),
++	}
++}
++
++type inputProcessor struct {
++	ut8       []byte
++	ut16      []uint16
++	buf       []rune
++	scratch   []byte
++	csiParams []byte
++	csiInterm []byte
++	escaped   bool
++	btnDown   bool // mouse button tracking for broken terms
++	state     inpState
++	strState  inpState // saved str state (needed for ST)
++	timer     *time.Timer
++	expire    time.Time
++	l         sync.Mutex
++	reencode  bool // bug with win32-input-mode on older terms
++	encBuf    []rune
++	evch      chan<- Event
++	rows      int // used for clipping mouse coordinates
++	cols      int // used for clipping mouse coordinates
++}
++
++func (ip *inputProcessor) SetSize(w, h int) {
++	go func() {
++		ip.l.Lock()
++		ip.rows = h
++		ip.cols = w
++		ip.post(NewEventResize(w, h))
++		ip.l.Unlock()
++	}()
++}
++func (ip *inputProcessor) post(ev Event) {
++	if ip.escaped {
++		ip.escaped = false
++		if ke, ok := ev.(*EventKey); ok {
++			ev = NewEventKey(ke.Key(), ke.Rune(), ke.Modifiers()|ModAlt, "")
++		}
++	} else if ke, ok := ev.(*EventKey); ok {
++		switch ke.Key() {
++		case keyPasteStart:
++			ev = NewEventPaste(true)
++		case keyPasteEnd:
++			ev = NewEventPaste(false)
++		}
++	}
++
++	// this tries to post, will drop events that overflow
++	select {
++	case ip.evch <- ev:
++	default:
++	}
++}
++
++func (ip *inputProcessor) escTimeout() {
++	ip.l.Lock()
++	defer ip.l.Unlock()
++	if ip.state == inpStateEsc && ip.expire.Before(time.Now()) {
++		// post it
++		ip.state = inpStateInit
++		ip.escaped = false
++		ip.post(NewEventKey(KeyEsc, 0, ModNone, ""))
++	}
++}
++
++type csiParamMode struct {
++	M rune // Mode
++	P int  // Parameter (first)
++}
++
++type keyMap struct {
++	Key Key
++	Mod ModMask
++}
++
++var csiAllKeys = map[csiParamMode]keyMap{
++	{M: 'A'}:         {Key: KeyUp},
++	{M: 'B'}:         {Key: KeyDown},
++	{M: 'C'}:         {Key: KeyRight},
++	{M: 'D'}:         {Key: KeyLeft},
++	{M: 'F'}:         {Key: KeyEnd},
++	{M: 'H'}:         {Key: KeyHome},
++	{M: 'L'}:         {Key: KeyInsert},
++	{M: 'P'}:         {Key: KeyF1}, // except for aixterm, where this is Delete
++	{M: 'Q'}:         {Key: KeyF2},
++	{M: 'S'}:         {Key: KeyF4},
++	{M: 'Z'}:         {Key: KeyBacktab},
++	{M: 'a'}:         {Key: KeyUp, Mod: ModShift},
++	{M: 'b'}:         {Key: KeyDown, Mod: ModShift},
++	{M: 'c'}:         {Key: KeyRight, Mod: ModShift},
++	{M: 'd'}:         {Key: KeyLeft, Mod: ModShift},
++	{M: 'q', P: 1}:   {Key: KeyF1}, // all these 'q' are for aixterm
++	{M: 'q', P: 2}:   {Key: KeyF2},
++	{M: 'q', P: 3}:   {Key: KeyF3},
++	{M: 'q', P: 4}:   {Key: KeyF4},
++	{M: 'q', P: 5}:   {Key: KeyF5},
++	{M: 'q', P: 6}:   {Key: KeyF6},
++	{M: 'q', P: 7}:   {Key: KeyF7},
++	{M: 'q', P: 8}:   {Key: KeyF8},
++	{M: 'q', P: 9}:   {Key: KeyF9},
++	{M: 'q', P: 10}:  {Key: KeyF10},
++	{M: 'q', P: 11}:  {Key: KeyF11},
++	{M: 'q', P: 12}:  {Key: KeyF12},
++	{M: 'q', P: 13}:  {Key: KeyF13},
++	{M: 'q', P: 14}:  {Key: KeyF14},
++	{M: 'q', P: 15}:  {Key: KeyF15},
++	{M: 'q', P: 16}:  {Key: KeyF16},
++	{M: 'q', P: 17}:  {Key: KeyF17},
++	{M: 'q', P: 18}:  {Key: KeyF18},
++	{M: 'q', P: 19}:  {Key: KeyF19},
++	{M: 'q', P: 20}:  {Key: KeyF20},
++	{M: 'q', P: 21}:  {Key: KeyF21},
++	{M: 'q', P: 22}:  {Key: KeyF22},
++	{M: 'q', P: 23}:  {Key: KeyF23},
++	{M: 'q', P: 24}:  {Key: KeyF24},
++	{M: 'q', P: 25}:  {Key: KeyF25},
++	{M: 'q', P: 26}:  {Key: KeyF26},
++	{M: 'q', P: 27}:  {Key: KeyF27},
++	{M: 'q', P: 28}:  {Key: KeyF28},
++	{M: 'q', P: 29}:  {Key: KeyF29},
++	{M: 'q', P: 30}:  {Key: KeyF30},
++	{M: 'q', P: 31}:  {Key: KeyF31},
++	{M: 'q', P: 32}:  {Key: KeyF32},
++	{M: 'q', P: 33}:  {Key: KeyF33},
++	{M: 'q', P: 34}:  {Key: KeyF34},
++	{M: 'q', P: 35}:  {Key: KeyF35},
++	{M: 'q', P: 36}:  {Key: KeyF36},
++	{M: 'q', P: 144}: {Key: KeyClear},
++	{M: 'q', P: 146}: {Key: KeyEnd},
++	{M: 'q', P: 150}: {Key: KeyPgUp},
++	{M: 'q', P: 154}: {Key: KeyPgDn},
++	{M: 'z', P: 214}: {Key: KeyHome},
++	{M: 'z', P: 216}: {Key: KeyPgUp},
++	{M: 'z', P: 220}: {Key: KeyEnd},
++	{M: 'z', P: 222}: {Key: KeyPgDn},
++	{M: 'z', P: 224}: {Key: KeyF1},
++	{M: 'z', P: 225}: {Key: KeyF2},
++	{M: 'z', P: 226}: {Key: KeyF3},
++	{M: 'z', P: 227}: {Key: KeyF4},
++	{M: 'z', P: 228}: {Key: KeyF5},
++	{M: 'z', P: 229}: {Key: KeyF6},
++	{M: 'z', P: 230}: {Key: KeyF7},
++	{M: 'z', P: 231}: {Key: KeyF8},
++	{M: 'z', P: 232}: {Key: KeyF9},
++	{M: 'z', P: 233}: {Key: KeyF10},
++	{M: 'z', P: 234}: {Key: KeyF11},
++	{M: 'z', P: 235}: {Key: KeyF12},
++	{M: 'z', P: 247}: {Key: KeyInsert},
++	{M: '^', P: 7}:   {Key: KeyHome, Mod: ModCtrl},
++	{M: '^', P: 8}:   {Key: KeyEnd, Mod: ModCtrl},
++	{M: '^', P: 11}:  {Key: KeyF23},
++	{M: '^', P: 12}:  {Key: KeyF24},
++	{M: '^', P: 13}:  {Key: KeyF25},
++	{M: '^', P: 14}:  {Key: KeyF26},
++	{M: '^', P: 15}:  {Key: KeyF27},
++	{M: '^', P: 17}:  {Key: KeyF28}, // 16 is a gap
++	{M: '^', P: 18}:  {Key: KeyF29},
++	{M: '^', P: 19}:  {Key: KeyF30},
++	{M: '^', P: 20}:  {Key: KeyF31},
++	{M: '^', P: 21}:  {Key: KeyF32},
++	{M: '^', P: 23}:  {Key: KeyF33}, // 22 is a gap
++	{M: '^', P: 24}:  {Key: KeyF34},
++	{M: '^', P: 25}:  {Key: KeyF35},
++	{M: '^', P: 26}:  {Key: KeyF36}, // 27 is a gap
++	{M: '^', P: 28}:  {Key: KeyF37},
++	{M: '^', P: 29}:  {Key: KeyF38}, // 30 is a gap
++	{M: '^', P: 31}:  {Key: KeyF39},
++	{M: '^', P: 32}:  {Key: KeyF40},
++	{M: '^', P: 33}:  {Key: KeyF41},
++	{M: '^', P: 34}:  {Key: KeyF42},
++	{M: '@', P: 23}:  {Key: KeyF43},
++	{M: '@', P: 24}:  {Key: KeyF44},
++	{M: '$', P: 2}:   {Key: KeyInsert, Mod: ModShift},
++	{M: '$', P: 3}:   {Key: KeyDelete, Mod: ModShift},
++	{M: '$', P: 7}:   {Key: KeyHome, Mod: ModShift},
++	{M: '$', P: 8}:   {Key: KeyEnd, Mod: ModShift},
++	{M: '$', P: 23}:  {Key: KeyF21},
++	{M: '$', P: 24}:  {Key: KeyF22},
++	{M: '~', P: 1}:   {Key: KeyHome},
++	{M: '~', P: 2}:   {Key: KeyInsert},
++	{M: '~', P: 3}:   {Key: KeyDelete},
++	{M: '~', P: 4}:   {Key: KeyEnd},
++	{M: '~', P: 5}:   {Key: KeyPgUp},
++	{M: '~', P: 6}:   {Key: KeyPgDn},
++	{M: '~', P: 7}:   {Key: KeyHome},
++	{M: '~', P: 8}:   {Key: KeyEnd},
++	{M: '~', P: 11}:  {Key: KeyF1},
++	{M: '~', P: 12}:  {Key: KeyF2},
++	{M: '~', P: 13}:  {Key: KeyF3},
++	{M: '~', P: 14}:  {Key: KeyF4},
++	{M: '~', P: 15}:  {Key: KeyF5},
++	{M: '~', P: 17}:  {Key: KeyF6},
++	{M: '~', P: 18}:  {Key: KeyF7},
++	{M: '~', P: 19}:  {Key: KeyF8},
++	{M: '~', P: 20}:  {Key: KeyF9},
++	{M: '~', P: 21}:  {Key: KeyF10},
++	{M: '~', P: 23}:  {Key: KeyF11},
++	{M: '~', P: 24}:  {Key: KeyF12},
++	{M: '~', P: 25}:  {Key: KeyF13},
++	{M: '~', P: 26}:  {Key: KeyF14},
++	{M: '~', P: 28}:  {Key: KeyF15}, // aka KeyHelp
++	{M: '~', P: 29}:  {Key: KeyF16},
++	{M: '~', P: 31}:  {Key: KeyF17},
++	{M: '~', P: 32}:  {Key: KeyF18},
++	{M: '~', P: 33}:  {Key: KeyF19},
++	{M: '~', P: 34}:  {Key: KeyF20},
++	{M: '~', P: 200}: {Key: keyPasteStart},
++	{M: '~', P: 201}: {Key: keyPasteEnd},
++}
++
++// keys reported using Kitty csi-u protocol
++var csiUKeys = map[int]Key{
++	27:    KeyESC,
++	9:     KeyTAB,
++	13:    KeyEnter,
++	127:   KeyBS,
++	57358: KeyCapsLock,
++	57359: KeyScrollLock,
++	57360: KeyNumLock,
++	57361: KeyPrint,
++	57362: KeyPause,
++	57363: KeyMenu,
++	57376: KeyF13,
++	57377: KeyF14,
++	57378: KeyF15,
++	57379: KeyF16,
++	57380: KeyF17,
++	57381: KeyF18,
++	57382: KeyF19,
++	57383: KeyF20,
++	57384: KeyF21,
++	57385: KeyF22,
++	57386: KeyF23,
++	57387: KeyF24,
++	57388: KeyF25,
++	57389: KeyF26,
++	57390: KeyF27,
++	57391: KeyF28,
++	57392: KeyF29,
++	57393: KeyF30,
++	57394: KeyF31,
++	57395: KeyF32,
++	57396: KeyF33,
++	57397: KeyF34,
++	57398: KeyF35,
++	// TODO: KP keys
++	// TODO: Media keys
++}
++
++// windows virtual key codes per microsoft
++var winKeys = map[int]Key{
++	0x03: KeyCancel,    // vkCancel
++	0x08: KeyBackspace, // vkBackspace
++	0x09: KeyTab,       // vkTab
++	0x0d: KeyEnter,     // vkReturn
++	0x12: KeyClear,     // vClear
++	0x13: KeyPause,     // vkPause
++	0x1b: KeyEscape,    // vkEscape
++	0x21: KeyPgUp,      // vkPrior
++	0x22: KeyPgDn,      // vkNext
++	0x23: KeyEnd,       // vkEnd
++	0x24: KeyHome,      // vkHome
++	0x25: KeyLeft,      // vkLeft
++	0x26: KeyUp,        // vkUp
++	0x27: KeyRight,     // vkRight
++	0x28: KeyDown,      // vkDown
++	0x2a: KeyPrint,     // vkPrint
++	0x2c: KeyPrint,     // vkPrtScr
++	0x2d: KeyInsert,    // vkInsert
++	0x2e: KeyDelete,    // vkDelete
++	0x2f: KeyHelp,      // vkHelp
++	0x70: KeyF1,        // vkF1
++	0x71: KeyF2,        // vkF2
++	0x72: KeyF3,        // vkF3
++	0x73: KeyF4,        // vkF4
++	0x74: KeyF5,        // vkF5
++	0x75: KeyF6,        // vkF6
++	0x76: KeyF7,        // vkF7
++	0x77: KeyF8,        // vkF8
++	0x78: KeyF9,        // vkF9
++	0x79: KeyF10,       // vkF10
++	0x7a: KeyF11,       // vkF11
++	0x7b: KeyF12,       // vkF12
++	0x7c: KeyF13,       // vkF13
++	0x7d: KeyF14,       // vkF14
++	0x7e: KeyF15,       // vkF15
++	0x7f: KeyF16,       // vkF16
++	0x80: KeyF17,       // vkF17
++	0x81: KeyF18,       // vkF18
++	0x82: KeyF19,       // vkF19
++	0x83: KeyF20,       // vkF20
++	0x84: KeyF21,       // vkF21
++	0x85: KeyF22,       // vkF22
++	0x86: KeyF23,       // vkF23
++	0x87: KeyF24,       // vkF24
++}
++
++// keys by their SS3 - used in application mode usually (legacy VT-style)
++var ss3Keys = map[rune]Key{
++	'A': KeyUp,
++	'B': KeyDown,
++	'C': KeyRight,
++	'D': KeyLeft,
++	'F': KeyEnd,
++	'H': KeyHome,
++	'P': KeyF1,
++	'Q': KeyF2,
++	'R': KeyF3,
++	'S': KeyF4,
++	't': KeyF5,
++	'u': KeyF6,
++	'v': KeyF7,
++	'l': KeyF8,
++	'w': KeyF9,
++	'x': KeyF10,
++}
++
++// linux terminal uses these non ECMA keys prefixed by CSI-[
++var linuxFKeys = map[rune]Key{
++	'A': KeyF1,
++	'B': KeyF2,
++	'C': KeyF3,
++	'D': KeyF4,
++	'E': KeyF5,
++}
++
++func (ip *inputProcessor) scan() {
++	for _, r := range ip.buf {
++		ip.buf = ip.buf[1:]
++		if r > 0x7F {
++			// 8-bit extended Unicode we just treat as such - this will swallow anything else queued up
++			ip.state = inpStateInit
++			ip.post(NewEventKey(KeyRune, r, ModNone, ""))
++			continue
++		}
++		switch ip.state {
++		case inpStateInit:
++			switch r {
++			case '\x1b':
++				// escape.. pending
++				ip.state = inpStateEsc
++				if len(ip.buf) == 0 {
++					ip.expire = time.Now().Add(time.Millisecond * 50)
++					ip.timer = time.AfterFunc(time.Millisecond*60, ip.escTimeout)
++				}
++			case '\t':
++				ip.post(NewEventKey(KeyTab, 0, ModNone, ""))
++			case '\b', '\x7F':
++				ip.post(NewEventKey(KeyBackspace, 0, ModNone, ""))
++			case '\n', '\r':
++				ip.post(NewEventKey(KeyEnter, 0, ModNone, ""))
++			default:
++				// Control keys - legacy handling
++				if r < ' ' {
++					ip.post(NewEventKey(KeyCtrlSpace+Key(r), 0, ModCtrl, ""))
++				} else {
++					ip.post(NewEventKey(KeyRune, r, ModNone, ""))
++				}
++			}
++		case inpStateEsc:
++			switch r {
++			case '[':
++				ip.state = inpStateCsi
++				ip.csiInterm = nil
++				ip.csiParams = nil
++			case ']':
++				ip.state = inpStateOsc
++				ip.scratch = nil
++			case 'N':
++				ip.state = inpStateSs2 // no known uses
++				ip.scratch = nil
++			case 'O':
++				ip.state = inpStateSs3
++				ip.scratch = nil
++			case 'X':
++				ip.state = inpStateSos
++				ip.scratch = nil
++			case '^':
++				ip.state = inpStatePm
++				ip.scratch = nil
++			case '_':
++				ip.state = inpStateApc
++				ip.scratch = nil
++			case '\\':
++				// string terminator reached, (orphaned?)
++				ip.state = inpStateInit
++			case '\t':
++				// Linux console only, does not conform to ECMA
++				ip.state = inpStateInit
++				ip.post(NewEventKey(KeyBacktab, 0, ModNone, ""))
++			default:
++				if r == '\x1b' {
++					// leading ESC to capture alt
++					ip.escaped = true
++				} else {
++					// treat as alt-key ... legacy emulators only (no CSI-u or other)
++					ip.state = inpStateInit
++					ip.post(NewEventKey(KeyRune, r, ModAlt, ""))
++				}
++			}
++		case inpStateCsi:
++			// usual case for incoming keys
++			if r >= 0x30 && r <= 0x3F { // parameter bytes
++				ip.csiParams = append(ip.csiParams, byte(r))
++			} else if r >= 0x20 && r <= 0x2F { // intermediate bytes, rarely used
++				ip.csiInterm = append(ip.csiInterm, byte(r))
++			} else if r >= 0x40 && r <= 0x7F { // final byte
++				ip.handleCsi(r, ip.csiParams, ip.csiInterm)
++			} else {
++				// bad parse, just swallow it all
++				ip.state = inpStateInit
++			}
++		case inpStateSs2:
++			// No known uses for SS2
++			ip.state = inpStateInit
++
++		case inpStateSs3: // typically application mode keys or older terminals
++			ip.state = inpStateInit
++			if k, ok := ss3Keys[r]; ok {
++				ip.post(NewEventKey(k, 0, ModNone, ""))
++			}
++
++		case inpStatePm, inpStateApc, inpStateSos, inpStateDcs: // these we just eat
++			switch r {
++			case '\x1b':
++				ip.strState = ip.state
++				ip.state = inpStateSt
++			case '\x07': // bell - some send this instead of ST
++				ip.state = inpStateInit
++			}
++
++		case inpStateOsc: // not sure if used
++			switch r {
++			case '\x1b':
++				ip.strState = ip.state
++				ip.state = inpStateSt
++			case '\x07':
++				ip.handleOsc(string(ip.scratch))
++			default:
++				ip.scratch = append(ip.scratch, byte(r&0x7f))
++			}
++		case inpStateSt:
++			if r == '\\' || r == '\x07' {
++				ip.state = inpStateInit
++				switch ip.strState {
++				case inpStateOsc:
++					ip.handleOsc(string(ip.scratch))
++				case inpStatePm, inpStateApc, inpStateSos, inpStateDcs:
++					ip.state = inpStateInit
++				}
++			} else {
++				ip.scratch = append(ip.scratch, '\x1b', byte(r))
++				ip.state = ip.strState
++			}
++		case inpStateLFK:
++			// linux console does not follow ECMA
++			if k, ok := linuxFKeys[r]; ok {
++				ip.post(NewEventKey(k, 0, ModNone, ""))
++			}
++			ip.state = inpStateInit
++		}
++	}
++}
++
++func (ip *inputProcessor) handleOsc(str string) {
++	ip.state = inpStateInit
++	if content, ok := strings.CutPrefix(str, "52;c;"); ok {
++		decoded := make([]byte, base64.StdEncoding.DecodedLen(len(content)))
++		if count, err := base64.StdEncoding.Decode(decoded, []byte(content)); err == nil {
++			ip.post(NewEventClipboard(decoded[:count]))
++			return
++		}
++	}
++}
++
++func calcModifier(n int) ModMask {
++	n--
++	m := ModNone
++	if n&1 != 0 {
++		m |= ModShift
++	}
++	if n&2 != 0 {
++		m |= ModAlt
++	}
++	if n&4 != 0 {
++		m |= ModCtrl
++	}
++	if n&8 != 0 {
++		m |= ModMeta // kitty calls this Super
++	}
++	if n&16 != 0 {
++		m |= ModHyper
++	}
++	if n&32 != 0 {
++		m |= ModMeta // for now not separating from Super
++	}
++	// Not doing (kitty only):
++	// caps_lock 0b1000000   (64)
++	// num_lock  0b10000000  (128)
++
++	return m
++}
++
++// func (ip *inputProcessor) handleMouse(x, y, btn int, down bool) *EventMouse {
++func (ip *inputProcessor) handleMouse(mode rune, params []int) {
++
++	// XTerm mouse events only report at most one button at a time,
++	// which may include a wheel button.  Wheel motion events are
++	// reported as single impulses, while other button events are reported
++	// as separate press & release events.
++	if len(params) < 3 {
++		return
++	}
++	btn := params[0]
++	// Some terminals will report mouse coordinates outside the
++	// screen, especially with click-drag events.  Clip the coordinates
++	// to the screen in that case.
++	x := max(min(params[1]-1, ip.cols-1), 0)
++	y := max(min(params[2]-1, ip.rows-1), 0)
++	motion := (btn & 0x20) != 0
++	scroll := (btn & 0x42) == 0x40
++	btn &^= 0x20
++	if mode == 'm' {
++		// mouse release, clear all buttons
++		btn |= 3
++		btn &^= 0x40
++		ip.btnDown = false
++	} else if motion {
++		/*
++		 * Some broken terminals appear to send
++		 * mouse button one motion events, instead of
++		 * encoding 35 (no buttons) into these events.
++		 * We resolve these by looking for a non-motion
++		 * event first.
++		 */
++		if !ip.btnDown {
++			btn |= 3
++			btn &^= 0x40
++		}
++	} else if !scroll {
++		ip.btnDown = true
++	}
++
++	button := ButtonNone
++	mod := ModNone
++
++	// Mouse wheel has bit 6 set, no release events.  It should be noted
++	// that wheel events are sometimes misdelivered as mouse button events
++	// during a click-drag, so we debounce these, considering them to be
++	// button press events unless we see an intervening release event.
++	switch btn & 0x43 {
++	case 0:
++		button = Button1
++	case 1:
++		button = Button3 // Note we prefer to treat right as button 2
++	case 2:
++		button = Button2 // And the middle button as button 3
++	case 3:
++		button = ButtonNone
++	case 0x40:
++		button = WheelUp
++	case 0x41:
++		button = WheelDown
++	case 0x42:
++		button = WheelLeft
++	case 0x43:
++		button = WheelRight
++	}
++
++	if btn&0x4 != 0 {
++		mod |= ModShift
++	}
++	if btn&0x8 != 0 {
++		mod |= ModAlt
++	}
++	if btn&0x10 != 0 {
++		mod |= ModCtrl
++	}
++
++	ip.post(NewEventMouse(x, y, button, mod, ""))
++}
++
++func (ip *inputProcessor) handleWinKey(P []int) {
++	// win32-input-mode
++	//  ^[ [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _
++	// Vk: the value of wVirtualKeyCode - any number. If omitted, defaults to '0'.
++	// Sc: the value of wVirtualScanCode - any number. If omitted, defaults to '0'.
++	// Uc: the decimal value of UnicodeChar - for example, NUL is "0", LF is
++	//     "10", the character 'A' is "65". If omitted, defaults to '0'.
++	// Kd: the value of bKeyDown - either a '0' or '1'. If omitted, defaults to '0'.
++	// Cs: the value of dwControlKeyState - any number. If omitted, defaults to '0'.
++	// Rc: the value of wRepeatCount - any number. If omitted, defaults to '1'.
++	//
++	// Note that some 3rd party terminal emulators (not Terminal) suffer from a bug
++	// where other events, such as mouse events, are doubly encoded, using Vk 0
++	// for each character.  (So a CSI-M sequence is encoded as a series of CSI-_
++	// sequences.)  We consider this a bug in those terminal emulators -- Windows 11
++	// Terminal does not suffer this brain damage. (We've observed this with both Alacritty
++	// and WezTerm.)
++	for len(P) < 6 {
++		P = append(P, 0) // ensure sufficient length
++	}
++	if P[3] == 0 {
++		// key up event ignore ignore
++		return
++	}
++	if P[0] == 0 {
++		if P[2] == 27 && !ip.reencode {
++			ip.reencode = true
++		}
++	}
++	if ip.reencode {
++		ip.encBuf = append(ip.encBuf, rune(P[2]))
++		// embedded content will itself be a CSI, so terminated by a CSI terminator
++		if len(ip.encBuf) > 2 && P[2] >= 0x40 && P[2] < 0x7F {
++			eb := ip.encBuf
++			ip.encBuf = nil
++			ip.reencode = false
++			ip.buf = append(eb, ip.buf...)
++			go ip.ScanUTF8(nil)
++		}
++		return
++	}
++
++	key := KeyRune
++	chr := rune(P[2])
++	mod := ModNone
++	rpt := max(1, P[5])
++	if k1, ok := winKeys[P[0]]; ok {
++		chr = 0
++		key = k1
++	} else if chr == 0 && P[0] >= 0x30 && P[0] <= 0x39 {
++		chr = rune(P[0])
++	} else if chr < ' ' && P[0] >= 0x41 && P[0] <= 0x5a {
++		key = Key(P[0])
++		chr = 0
++	} else if key == 0x11 || key == 0x13 || key == 0x14 {
++		// lone modifiers
++		return
++	}
++
++	// Modifiers
++	if P[4]&0x010 != 0 {
++		mod |= ModShift
++	}
++	if P[4]&0x000c != 0 {
++		mod |= ModCtrl
++	}
++	if P[4]&0x0003 != 0 {
++		mod |= ModAlt
++	}
++	if key == KeyRune && chr > ' ' && mod == ModShift {
++		// filter out lone shift for printable chars
++		mod = ModNone
++	}
++	if chr != 0 && mod&(ModCtrl|ModAlt) == ModCtrl|ModAlt {
++		// Filter out ctrl+alt (it means AltGr)
++		mod = ModNone
++	}
++
++	for range rpt {
++		if key != KeyRune || chr != 0 {
++			ip.post(NewEventKey(key, chr, mod, ""))
++		}
++	}
++}
++
++func (ip *inputProcessor) handleCsi(mode rune, params []byte, intermediate []byte) {
++
++	// reset state
++	ip.state = inpStateInit
++
++	if len(intermediate) != 0 {
++		// we don't know what to do with these for now
++		return
++	}
++
++	var parts []string
++	var P []int
++	hasLT := false
++	pstr := string(params)
++	// extract numeric parameters
++	if strings.HasPrefix(pstr, "<") {
++		hasLT = true
++		pstr = pstr[1:]
++	}
++	if pstr != "" && pstr[0] >= '0' && pstr[0] <= '9' {
++		parts = strings.Split(pstr, ";")
++		for i := range parts {
++			if parts[i] != "" {
++				if n, e := strconv.ParseInt(parts[i], 10, 32); e == nil {
++					P = append(P, int(n))
++				}
++			}
++		}
++	}
++	var P0 int
++	if len(P) > 0 {
++		P0 = P[0]
++	}
++
++	if hasLT {
++		switch mode {
++		case 'm', 'M': // mouse event, we only do SGR tracking
++			ip.handleMouse(mode, P)
++		}
++	}
++
++	switch mode {
++	case 'I': // focus in
++		ip.post(NewEventFocus(true))
++		return
++	case 'O': // focus out
++		ip.post(NewEventFocus(false))
++		return
++	case '[':
++		// linux console F-key - CSI-[ modifies next key
++		ip.state = inpStateLFK
++		return
++	case 'u':
++		// CSI-u kitty keyboard protocol
++		if len(P) > 0 && !hasLT {
++			mod := ModNone
++			key := KeyRune
++			chr := rune(0)
++			if k1, ok := csiUKeys[P0]; ok {
++				key = k1
++				chr = 0
++			} else {
++				chr = rune(P0)
++			}
++			if len(P) > 1 {
++				mod = calcModifier(P[1])
++			}
++			ip.post(NewEventKey(key, chr, mod, ""))
++		}
++		return
++	case '_':
++		if len(intermediate) == 0 && len(P) > 0 {
++			ip.handleWinKey(P)
++		}
++	}
++
++	if ks, ok := csiAllKeys[csiParamMode{M: mode, P: P0}]; ok && !hasLT {
++		if mode == '~' && len(P) > 1 && ks.Mod == ModNone {
++			// apply modifiers if present
++			ks.Mod = calcModifier(P[1])
++		} else if mode == 'P' && os.Getenv("TERM") == "aixterm" {
++			ks.Key = KeyDelete // aixterm hack - conflicts with kitty protocol
++		}
++		ip.post(NewEventKey(ks.Key, 0, ks.Mod, ""))
++		return
++	}
++
++	// this might have been an SS3 style key with modifiers applied
++	if k, ok := ss3Keys[mode]; ok && P0 == 1 && len(P) > 1 {
++		ip.post(NewEventKey(k, 0, calcModifier(P[1]), ""))
++		return
++	}
++
++	// if we got here we just swallow the unknown sequence
++}
++
++func (ip *inputProcessor) ScanUTF8(b []byte) {
++	ip.l.Lock()
++	defer ip.l.Unlock()
++
++	ip.ut8 = append(ip.ut8, b...)
++	for len(ip.ut8) > 0 {
++		// fast path, basic ascii
++		if ip.ut8[0] < 0x7F {
++			ip.buf = append(ip.buf, rune(ip.ut8[0]))
++			ip.ut8 = ip.ut8[1:]
++		} else {
++			r, len := utf8.DecodeRune(ip.ut8)
++			if r == utf8.RuneError {
++				r = rune(ip.ut8[1])
++				len = 1
++			}
++			ip.buf = append(ip.buf, r)
++			ip.ut8 = ip.ut8[len:]
++		}
++	}
++
++	ip.scan()
++}
++
++func (ip *inputProcessor) ScanUTF16(u []uint16) {
++	ip.l.Lock()
++	defer ip.l.Unlock()
++	ip.ut16 = append(ip.ut16, u...)
++	for len(ip.ut16) > 0 {
++		if !utf16.IsSurrogate(rune(ip.ut16[0])) {
++			ip.buf = append(ip.buf, rune(ip.ut16[0]))
++			ip.ut16 = ip.ut16[1:]
++		} else if len(ip.ut16) > 1 {
++			ip.buf = append(ip.buf, utf16.DecodeRune(rune(ip.ut16[0]), rune(ip.ut16[1])))
++			ip.ut16 = ip.ut16[2:]
++		} else {
++			break
++		}
++	}
++}
+diff --git c/key.go w/key.go
 index 0dde010..127f85b 100644
---- i/key.go
+--- c/key.go
 +++ w/key.go
 @@ -1,4 +1,4 @@
 -// Copyright 2016 The TCell Authors
@@ -2601,9 +3613,9 @@ index 0dde010..127f85b 100644
 +	// NB: This key will be translated to KeyBackspace
  	KeyBackspace2 = KeyDEL
  )
-diff --git i/mouse.go w/mouse.go
+diff --git c/mouse.go w/mouse.go
 index e423058..3dfb815 100644
---- i/mouse.go
+--- c/mouse.go
 +++ w/mouse.go
 @@ -1,4 +1,4 @@
 -// Copyright 2020 The TCell Authors
@@ -2635,9 +3647,105 @@ index e423058..3dfb815 100644
  // NewEventMouse is used to create a new mouse event.  Applications
  // shouldn't need to use this; its mostly for screen implementors.
  func NewEventMouse(x, y int, btn ButtonMask, mod ModMask, esc string) *EventMouse {
-diff --git i/paste.go w/paste.go
+diff --git c/nonblock_bsd.go w/nonblock_bsd.go
+new file mode 100644
+index 0000000..622888e
+--- /dev/null
++++ w/nonblock_bsd.go
+@@ -0,0 +1,43 @@
++// Copyright 2021 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build darwin || dragonfly || freebsd || netbsd || openbsd
++// +build darwin dragonfly freebsd netbsd openbsd
++
++package tcell
++
++import (
++	"syscall"
++
++	"golang.org/x/sys/unix"
++)
++
++// BSD systems use TIOC style ioctls.
++
++// tcSetBufParams is used by the tty driver on UNIX systems to configure the
++// buffering parameters (minimum character count and minimum wait time in msec.)
++// This also waits for output to drain first.
++func tcSetBufParams(fd int, vMin uint8, vTime uint8) error {
++	_ = syscall.SetNonblock(fd, true)
++	tio, err := unix.IoctlGetTermios(fd, unix.TIOCGETA)
++	if err != nil {
++		return err
++	}
++	tio.Cc[unix.VMIN] = vMin
++	tio.Cc[unix.VTIME] = vTime
++	if err = unix.IoctlSetTermios(fd, unix.TIOCSETAW, tio); err != nil {
++		return err
++	}
++	return nil
++}
+diff --git c/nonblock_unix.go w/nonblock_unix.go
+new file mode 100644
+index 0000000..160a641
+--- /dev/null
++++ w/nonblock_unix.go
+@@ -0,0 +1,41 @@
++// Copyright 2021 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build linux || aix || zos || solaris
++// +build linux aix zos solaris
++
++package tcell
++
++import (
++	"syscall"
++
++	"golang.org/x/sys/unix"
++)
++
++// tcSetBufParams is used by the tty driver on UNIX systems to configure the
++// buffering parameters (minimum character count and minimum wait time in msec.)
++// This also waits for output to drain first.
++func tcSetBufParams(fd int, vMin uint8, vTime uint8) error {
++	_ = syscall.SetNonblock(fd, true)
++	tio, err := unix.IoctlGetTermios(fd, unix.TCGETS)
++	if err != nil {
++		return err
++	}
++	tio.Cc[unix.VMIN] = vMin
++	tio.Cc[unix.VTIME] = vTime
++	if err = unix.IoctlSetTermios(fd, unix.TCSETSW, tio); err != nil {
++		return err
++	}
++	return nil
++}
+diff --git c/paste.go w/paste.go
 index 6d559d4..806244c 100644
---- i/paste.go
+--- c/paste.go
 +++ w/paste.go
 @@ -1,4 +1,4 @@
 -// Copyright 2016 The TCell Authors
@@ -2742,9 +3850,9 @@ index 6d559d4..806244c 100644
 +func (ev *EventClipboard) EscSeq() string {
 +	return ""
  }
-diff --git i/resize.go w/resize.go
+diff --git c/resize.go w/resize.go
 index 7f9b704..c8ac1d3 100644
---- i/resize.go
+--- c/resize.go
 +++ w/resize.go
 @@ -20,15 +20,18 @@ import (
  
@@ -2801,9 +3909,9 @@ index 7f9b704..c8ac1d3 100644
 +	}
 +	return (ws.PixelWidth / ws.Width), (ws.PixelHeight / ws.Height)
 +}
-diff --git i/screen.go w/screen.go
+diff --git c/screen.go w/screen.go
 index d4f8469..8d98300 100644
---- i/screen.go
+--- c/screen.go
 +++ w/screen.go
 @@ -1,4 +1,4 @@
 -// Copyright 2019 The TCell Authors
@@ -3382,9 +4490,9 @@ index d4f8469..8d98300 100644
 +
 +func (b *baseScreen) RegisterRawSeq(string)   {}
 +func (b *baseScreen) UnregisterRawSeq(string) {}
-diff --git i/sim_test.go w/sim_test.go
+diff --git c/sim_test.go w/sim_test.go
 index 8cd7370..594e395 100644
---- i/sim_test.go
+--- c/sim_test.go
 +++ w/sim_test.go
 @@ -1,4 +1,4 @@
 -// Copyright 2018 The TCell Authors
@@ -3429,9 +4537,9 @@ index 8cd7370..594e395 100644
 +		t.Errorf("Title mismatched")
 +	}
 +}
-diff --git i/simulation.go w/simulation.go
+diff --git c/simulation.go w/simulation.go
 index 0d5231c..4fe8f72 100644
---- i/simulation.go
+--- c/simulation.go
 +++ w/simulation.go
 @@ -1,4 +1,4 @@
 -// Copyright 2016 The TCell Authors
@@ -3754,9 +4862,201 @@ index 0d5231c..4fe8f72 100644
 +func (s *simscreen) GetClipboardData() []byte {
 +	return s.clipboard
 +}
-diff --git i/style.go w/style.go
+diff --git c/stdin_unix.go w/stdin_unix.go
+new file mode 100644
+index 0000000..b478b89
+--- /dev/null
++++ w/stdin_unix.go
+@@ -0,0 +1,186 @@
++// Copyright 2021 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
++// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
++
++package tcell
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"os/signal"
++	"strconv"
++	"sync"
++	"syscall"
++	"time"
++
++	"golang.org/x/sys/unix"
++	"golang.org/x/term"
++)
++
++// stdIoTty is an implementation of the Tty API based upon stdin/stdout.
++type stdIoTty struct {
++	fd    int
++	in    *os.File
++	out   *os.File
++	saved *term.State
++	sig   chan os.Signal
++	cb    func()
++	stopQ chan struct{}
++	dev   string
++	wg    sync.WaitGroup
++	l     sync.Mutex
++}
++
++func (tty *stdIoTty) Read(b []byte) (int, error) {
++	return tty.in.Read(b)
++}
++
++func (tty *stdIoTty) Write(b []byte) (int, error) {
++	return tty.out.Write(b)
++}
++
++func (tty *stdIoTty) Close() error {
++	return nil
++}
++
++func (tty *stdIoTty) Start() error {
++	tty.l.Lock()
++	defer tty.l.Unlock()
++
++	// We open another copy of /dev/tty.  This is a workaround for unusual behavior
++	// observed in macOS, apparently caused when a sub-shell (for example) closes our
++	// own tty device (when it exits for example).  Getting a fresh new one seems to
++	// resolve the problem.  (We believe this is a bug in the macOS tty driver that
++	// fails to account for dup() references to the same file before applying close()
++	// related behaviors to the tty.)  We're also holding the original copy we opened
++	// since closing that might have deleterious effects as well.  The upshot is that
++	// we will have up to two separate file handles open on /dev/tty.  (Note that when
++	// using stdin/stdout instead of /dev/tty this problem is not observed.)
++	var err error
++	tty.in = os.Stdin
++	tty.out = os.Stdout
++	tty.fd = int(tty.in.Fd())
++
++	if !term.IsTerminal(tty.fd) {
++		return errors.New("device is not a terminal")
++	}
++
++	_ = tty.in.SetReadDeadline(time.Time{})
++	saved, err := term.MakeRaw(tty.fd) // also sets vMin and vTime
++	if err != nil {
++		return err
++	}
++	tty.saved = saved
++
++	tty.stopQ = make(chan struct{})
++	tty.wg.Add(1)
++	go func(stopQ chan struct{}) {
++		defer tty.wg.Done()
++		for {
++			select {
++			case <-tty.sig:
++				tty.l.Lock()
++				cb := tty.cb
++				tty.l.Unlock()
++				if cb != nil {
++					cb()
++				}
++			case <-stopQ:
++				return
++			}
++		}
++	}(tty.stopQ)
++
++	signal.Notify(tty.sig, syscall.SIGWINCH)
++	return nil
++}
++
++func (tty *stdIoTty) Drain() error {
++	_ = tty.in.SetReadDeadline(time.Now())
++	if err := tcSetBufParams(tty.fd, 0, 0); err != nil {
++		return err
++	}
++	return nil
++}
++
++func (tty *stdIoTty) Stop() error {
++	tty.l.Lock()
++	if err := term.Restore(tty.fd, tty.saved); err != nil {
++		tty.l.Unlock()
++		return err
++	}
++	_ = tty.in.SetReadDeadline(time.Now())
++
++	signal.Stop(tty.sig)
++	close(tty.stopQ)
++	tty.l.Unlock()
++
++	tty.wg.Wait()
++
++	return nil
++}
++
++func (tty *stdIoTty) WindowSize() (WindowSize, error) {
++	size := WindowSize{}
++	ws, err := unix.IoctlGetWinsize(tty.fd, unix.TIOCGWINSZ)
++	if err != nil {
++		return size, err
++	}
++	w := int(ws.Col)
++	h := int(ws.Row)
++	if w == 0 {
++		w, _ = strconv.Atoi(os.Getenv("COLUMNS"))
++	}
++	if w == 0 {
++		w = 80 // default
++	}
++	if h == 0 {
++		h, _ = strconv.Atoi(os.Getenv("LINES"))
++	}
++	if h == 0 {
++		h = 25 // default
++	}
++	size.Width = w
++	size.Height = h
++	size.PixelWidth = int(ws.Xpixel)
++	size.PixelHeight = int(ws.Ypixel)
++	return size, nil
++}
++
++func (tty *stdIoTty) NotifyResize(cb func()) {
++	tty.l.Lock()
++	tty.cb = cb
++	tty.l.Unlock()
++}
++
++// NewStdioTty opens a tty using standard input/output.
++func NewStdIoTty() (Tty, error) {
++	tty := &stdIoTty{
++		sig: make(chan os.Signal),
++		in:  os.Stdin,
++		out: os.Stdout,
++	}
++	var err error
++	tty.fd = int(tty.in.Fd())
++	if !term.IsTerminal(tty.fd) {
++		return nil, errors.New("not a terminal")
++	}
++	if tty.saved, err = term.GetState(tty.fd); err != nil {
++		return nil, fmt.Errorf("failed to get state: %w", err)
++	}
++	return tty, nil
++}
+diff --git c/style.go w/style.go
 index 4f028c1..73995c0 100644
---- i/style.go
+--- c/style.go
 +++ w/style.go
 @@ -1,4 +1,4 @@
 -// Copyright 2020 The TCell Authors
@@ -3957,9 +5257,9 @@ index 4f028c1..73995c0 100644
 +	s2.urlId = "id=" + id
 +	return s2
 +}
-diff --git i/style_test.go w/style_test.go
+diff --git c/style_test.go w/style_test.go
 index 861c65f..b771c11 100644
---- i/style_test.go
+--- c/style_test.go
 +++ w/style_test.go
 @@ -1,4 +1,4 @@
 -// Copyright 2018 The TCell Authors
@@ -3985,9 +5285,9 @@ index 861c65f..b771c11 100644
  	if fg != ColorBlue || bg != ColorRed || attr != AttrBlink {
  		t.Errorf("Bad custom style (%v, %v, %v)", fg, bg, attr)
  	}
-diff --git i/terms_default.go w/terms_default.go
+diff --git c/terms_default.go w/terms_default.go
 index da3fa21..fefcf89 100644
---- i/terms_default.go
+--- c/terms_default.go
 +++ w/terms_default.go
 @@ -1,3 +1,4 @@
 +//go:build !tcell_minimal
@@ -4001,9 +5301,9 @@ index da3fa21..fefcf89 100644
 -	_ "github.com/zyedidia/tcell/v2/terminfo/extended"
 +	_ "github.com/gdamore/tcell/v2/terminfo/extended"
  )
-diff --git i/terms_dynamic.go w/terms_dynamic.go
+diff --git c/terms_dynamic.go w/terms_dynamic.go
 index b029e44..9e54944 100644
---- i/terms_dynamic.go
+--- c/terms_dynamic.go
 +++ w/terms_dynamic.go
 @@ -1,3 +1,4 @@
 +//go:build !tcell_minimal && !nacl && !js && !zos && !plan9 && !windows && !android
@@ -4029,9 +5329,9 @@ index b029e44..9e54944 100644
  	ti, _, e := dynamic.LoadTerminfo(term)
  	if e != nil {
  		return nil, e
-diff --git i/terms_static.go w/terms_static.go
+diff --git c/terms_static.go w/terms_static.go
 index 471c985..6d725cb 100644
---- i/terms_static.go
+--- c/terms_static.go
 +++ w/terms_static.go
 @@ -1,4 +1,5 @@
 -// +build tcell_minimal nacl js zos plan9 windows android
@@ -4049,9 +5349,9 @@ index 471c985..6d725cb 100644
  )
  
  func loadDynamicTerminfo(_ string) (*terminfo.Terminfo, error) {
-diff --git i/tscreen.go w/tscreen.go
+diff --git c/tscreen.go w/tscreen.go
 index 7e9c410..d346a79 100644
---- i/tscreen.go
+--- c/tscreen.go
 +++ w/tscreen.go
 @@ -1,4 +1,4 @@
 -// Copyright 2019 The TCell Authors
@@ -6281,3 +7581,1596 @@ index 7e9c410..d346a79 100644
 +	t.Unlock()
 +}
 +
+diff --git c/tscreen_plan9.go w/tscreen_plan9.go
+new file mode 100644
+index 0000000..fdd55b8
+--- /dev/null
++++ w/tscreen_plan9.go
+@@ -0,0 +1,36 @@
++//go:build plan9
++// +build plan9
++
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++import "os"
++
++// initialize on Plan 9: if no TTY was provided, use the Plan 9 TTY.
++func (t *tScreen) initialize() error {
++    if os.Getenv("TERM") == "" {
++        // TERM should be "vt100" in a vt(1) window; color/mouse support will be limited.
++        _ = os.Setenv("TERM", "vt100")
++    }
++	if t.tty == nil {
++		tty, err := NewDevTty()
++		if err != nil {
++			return err
++		}
++		t.tty = tty
++	}
++	return nil
++}
+diff --git c/tscreen_unix.go w/tscreen_unix.go
+new file mode 100644
+index 0000000..27f4c81
+--- /dev/null
++++ w/tscreen_unix.go
+@@ -0,0 +1,37 @@
++// Copyright 2024 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
++// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
++
++package tcell
++
++import (
++	// import the stock terminals
++	_ "github.com/gdamore/tcell/v2/terminfo/base"
++)
++
++// initialize is used at application startup, and sets up the initial values
++// including file descriptors used for terminals and saving the initial state
++// so that it can be restored when the application terminates.
++func (t *tScreen) initialize() error {
++	var err error
++	if t.tty == nil {
++		t.tty, err = NewDevTty()
++		if err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git c/tscreen_win.go w/tscreen_win.go
+new file mode 100644
+index 0000000..f2f9e24
+--- /dev/null
++++ w/tscreen_win.go
+@@ -0,0 +1,41 @@
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build windows
++// +build windows
++
++package tcell
++
++import (
++	// import the stock terminals
++	_ "github.com/gdamore/tcell/v2/terminfo/base"
++)
++
++// initialize is used at application startup, and sets up the initial values
++// including file descriptors used for terminals and saving the initial state
++// so that it can be restored when the application terminates.
++func (t *tScreen) initialize() error {
++	var err error
++	if t.tty == nil {
++		t.tty, err = NewDevTty()
++		if err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func init() {
++	defaultTerm = "xterm-truecolor"
++}
+diff --git c/tty.go w/tty.go
+new file mode 100644
+index 0000000..8bb1ac5
+--- /dev/null
++++ w/tty.go
+@@ -0,0 +1,56 @@
++// Copyright 2021 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++import "io"
++
++// Tty is an abstraction of a tty (traditionally "teletype").  This allows applications to
++// provide for alternate backends, as there are situations where the traditional /dev/tty
++// does not work, or where more flexible handling is required.  This interface is for use
++// with the terminfo-style based API.  It extends the io.ReadWriter API.  It is reasonable
++// that the implementation might choose to use different underlying files for the Reader
++// and Writer sides of this API, as part of it's internal implementation.
++type Tty interface {
++	// Start is used to activate the Tty for use.  Upon return the terminal should be
++	// in raw mode, non-blocking, etc.  The implementation should take care of saving
++	// any state that is required so that it may be restored when Stop is called.
++	Start() error
++
++	// Stop is used to stop using this Tty instance.  This may be a suspend, so that other
++	// terminal based applications can run in the foreground.  Implementations should
++	// restore any state collected at Start(), and return to ordinary blocking mode, etc.
++	// Drain is called first to drain the input.  Once this is called, no more Read
++	// or Write calls will be made until Start is called again.
++	Stop() error
++
++	// Drain is called before Stop, and ensures that the reader will wake up appropriately
++	// if it was blocked.  This workaround is required for /dev/tty on certain UNIX systems
++	// to ensure that Read() does not block forever.  This typically arranges for the tty driver
++	// to send data immediately (e.g. VMIN and VTIME both set zero) and sets a deadline on input.
++	// Implementations may reasonably make this a no-op.  There will still be control sequences
++	// emitted between the time this is called, and when Stop is called.
++	Drain() error
++
++	// NotifyResize is used register a callback when the tty thinks the dimensions have
++	// changed.  The standard UNIX implementation links this to a handler for SIGWINCH.
++	// If the supplied callback is nil, then any handler should be unregistered.
++	NotifyResize(cb func())
++
++	// WindowSize is called to determine the terminal dimensions.  This might be determined
++	// by an ioctl or other means.
++	WindowSize() (WindowSize, error)
++
++	io.ReadWriteCloser
++}
+diff --git c/tty_plan9.go w/tty_plan9.go
+new file mode 100644
+index 0000000..6c99ee6
+--- /dev/null
++++ w/tty_plan9.go
+@@ -0,0 +1,270 @@
++//go:build plan9
++// +build plan9
++
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcell
++
++import (
++	"bufio"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"strconv"
++	"strings"
++	"sync"
++	"sync/atomic"
++)
++
++// p9Tty implements tcell.Tty using Plan 9's /dev/cons and /dev/consctl.
++// Raw mode is enabled by writing "rawon" to /dev/consctl while the fd stays open.
++// Resize notifications are read from /dev/wctl: the first read returns geometry,
++// subsequent reads block until the window changes (rio(4)).
++//
++// References:
++// - kbdfs(8): cons/consctl rawon|rawoff semantics
++// - rio(4): wctl geometry and blocking-on-change behavior
++// - vt(1): VT100 emulator typically used for TUI programs on Plan 9
++//
++// Limitations:
++// - We assume VT100-level capabilities (often no colors, no mouse).
++// - Window size is conservative: we return 80x24 unless overridden.
++//   Set LINES/COLUMNS (or TCELL_LINES/TCELL_COLS) to refine.
++// - Mouse and bracketed paste are not wired; terminfo/xterm queries
++//   are not attempted because vt(1) may not support them.
++type p9Tty struct {
++	cons    *os.File // /dev/cons (read+write)
++	consctl *os.File // /dev/consctl (write "rawon"/"rawoff")
++	wctl    *os.File // /dev/wctl (resize notifications)
++
++	// protect close/stop; Read/Write are serialized by os.File
++	mu     sync.Mutex
++	closed atomic.Bool
++
++	// resize callback
++	onResize atomic.Value // func()
++	wg       sync.WaitGroup
++	stopCh   chan struct{}
++}
++
++func NewDevTty() (Tty, error) { // tcell signature
++	return newPlan9TTY()
++}
++
++func NewStdIoTty() (Tty, error) { // also required by tcell
++	// On Plan 9 there is no POSIX tty discipline on stdin/stdout;
++	// use /dev/cons explicitly for robustness.
++	return newPlan9TTY()
++}
++
++func NewDevTtyFromDev(_ string) (Tty, error) { // required by tcell
++	// Plan 9 does not have multiple "ttys" in the POSIX sense;
++	// always bind to /dev/cons and /dev/consctl.
++	return newPlan9TTY()
++}
++
++func newPlan9TTY() (Tty, error) {
++	cons, err := os.OpenFile("/dev/cons", os.O_RDWR, 0)
++	if err != nil {
++		return nil, fmt.Errorf("open /dev/cons: %w", err)
++	}
++	consctl, err := os.OpenFile("/dev/consctl", os.O_WRONLY, 0)
++	if err != nil {
++		_ = cons.Close()
++		return nil, fmt.Errorf("open /dev/consctl: %w", err)
++	}
++	// /dev/wctl may not exist (console without rio); best-effort.
++	wctl, _ := os.OpenFile("/dev/wctl", os.O_RDWR, 0)
++
++	t := &p9Tty{
++		cons:    cons,
++		consctl: consctl,
++		wctl:    wctl,
++		stopCh:  make(chan struct{}),
++	}
++	return t, nil
++}
++
++func (t *p9Tty) Start() error {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++
++	if t.closed.Load() {
++		return errors.New("tty closed")
++	}
++
++	// Recreate stop channel if absent or closed (supports resume).
++	if t.stopCh == nil || isClosed(t.stopCh) {
++		t.stopCh = make(chan struct{})
++	}
++
++	// Put console into raw mode; remains active while consctl is open.
++	if _, err := t.consctl.Write([]byte("rawon")); err != nil {
++		return fmt.Errorf("enable raw mode: %w", err)
++	}
++
++	// Reopen /dev/wctl on resume; best-effort (system console may lack it).
++	if t.wctl == nil {
++		if f, err := os.OpenFile("/dev/wctl", os.O_RDWR, 0); err == nil {
++			t.wctl = f
++		}
++	}
++
++	if t.wctl != nil {
++		t.wg.Add(1)
++		go t.watchResize()
++	}
++	return nil
++}
++
++func (t *p9Tty) Drain() error {
++	// Per tcell docs, this may reasonably be a no-op on non-POSIX ttys.
++	// Read deadlines are not available on plan9 os.File; we rely on Stop().
++	return nil
++}
++
++func (t *p9Tty) Stop() error {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++
++	// Signal watcher to stop (if not already).
++	if t.stopCh != nil && !isClosed(t.stopCh) {
++		close(t.stopCh)
++	}
++
++	// Exit raw mode first.
++	_, _ = t.consctl.Write([]byte("rawoff"))
++
++	// Closing wctl unblocks watchResize; nil it so Start() can reopen later.
++	if t.wctl != nil {
++		_ = t.wctl.Close()
++		t.wctl = nil
++	}
++
++	// Ensure watcher goroutine has exited before returning.
++	t.wg.Wait()
++	return nil
++}
++
++func (t *p9Tty) Close() error {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++
++	if t.closed.Swap(true) {
++		return nil
++	}
++
++	if t.stopCh != nil && !isClosed(t.stopCh) {
++		close(t.stopCh)
++	}
++	_, _ = t.consctl.Write([]byte("rawoff"))
++
++	_ = t.cons.Close()
++	_ = t.consctl.Close()
++	if t.wctl != nil {
++		_ = t.wctl.Close()
++		t.wctl = nil
++	}
++
++	t.wg.Wait()
++	return nil
++}
++
++func (t *p9Tty) Read(p []byte) (int, error) {
++	return t.cons.Read(p)
++}
++
++func (t *p9Tty) Write(p []byte) (int, error) {
++	return t.cons.Write(p)
++}
++
++func (t *p9Tty) NotifyResize(cb func()) {
++	if cb == nil {
++		t.onResize.Store((func())(nil))
++		return
++	}
++	t.onResize.Store(cb)
++}
++
++func (t *p9Tty) WindowSize() (WindowSize, error) {
++	// Strategy:
++	// 1) honor explicit overrides (TCELL_LINES/TCELL_COLS, LINES/COLUMNS),
++	// 2) otherwise return conservative 80x24.
++	// Reading /dev/wctl gives pixel geometry, but char cell metrics are
++	// not generally available to non-draw clients; vt(1) is fixed-cell.
++	lines, cols := envInt("TCELL_LINES"), envInt("TCELL_COLS")
++	if lines == 0 {
++		lines = envInt("LINES")
++	}
++	if cols == 0 {
++		cols = envInt("COLUMNS")
++	}
++	if lines <= 0 {
++		lines = 24
++	}
++	if cols <= 0 {
++		cols = 80
++	}
++	return WindowSize{Width: cols, Height: lines}, nil
++}
++
++// watchResize blocks on /dev/wctl reads; each read returns when the window
++// changes size/position/state, per rio(4). We ignore the parsed geometry and
++// just notify tcell to re-query WindowSize().
++func (t *p9Tty) watchResize() {
++	defer t.wg.Done()
++
++	r := bufio.NewReader(t.wctl)
++	for {
++		select {
++		case <-t.stopCh:
++			return
++		default:
++		}
++		// Each read delivers something like:
++		// "   minx        miny        maxx        maxy   visible current\n"
++		// We don't need to parse here; just signal.
++		_, err := r.ReadString('\n')
++		if err != nil {
++			if errors.Is(err, io.EOF) {
++				return
++			}
++			// transient errors: continue
++		}
++		if cb, _ := t.onResize.Load().(func()); cb != nil {
++			cb()
++		}
++	}
++}
++
++func envInt(name string) int {
++	if s := strings.TrimSpace(os.Getenv(name)); s != "" {
++		if v, err := strconv.Atoi(s); err == nil {
++			return v
++		}
++	}
++	return 0
++}
++
++// helper: safe check if a channel is closed
++func isClosed(ch <-chan struct{}) bool {
++	select {
++	case <-ch:
++		return true
++	default:
++		return false
++	}
++}
+diff --git c/tty_unix.go w/tty_unix.go
+new file mode 100644
+index 0000000..ca82d83
+--- /dev/null
++++ w/tty_unix.go
+@@ -0,0 +1,198 @@
++// Copyright 2021 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
++// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
++
++package tcell
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"os/signal"
++	"strconv"
++	"sync"
++	"syscall"
++	"time"
++
++	"golang.org/x/sys/unix"
++	"golang.org/x/term"
++)
++
++// devTty is an implementation of the Tty API based upon /dev/tty.
++type devTty struct {
++	fd    int
++	f     *os.File
++	of    *os.File // the first open of /dev/tty
++	saved *term.State
++	sig   chan os.Signal
++	cb    func()
++	stopQ chan struct{}
++	dev   string
++	wg    sync.WaitGroup
++	l     sync.Mutex
++}
++
++func (tty *devTty) Read(b []byte) (int, error) {
++	return tty.f.Read(b)
++}
++
++func (tty *devTty) Write(b []byte) (int, error) {
++	return tty.f.Write(b)
++}
++
++func (tty *devTty) Close() error {
++	return tty.f.Close()
++}
++
++func (tty *devTty) Start() error {
++	tty.l.Lock()
++	defer tty.l.Unlock()
++
++	// We open another copy of /dev/tty.  This is a workaround for unusual behavior
++	// observed in macOS, apparently caused when a subshell (for example) closes our
++	// own tty device (when it exits for example).  Getting a fresh new one seems to
++	// resolve the problem.  (We believe this is a bug in the macOS tty driver that
++	// fails to account for dup() references to the same file before applying close()
++	// related behaviors to the tty.)  We're also holding the original copy we opened
++	// since closing that might have deleterious effects as well.  The upshot is that
++	// we will have up to two separate file handles open on /dev/tty.  (Note that when
++	// using stdin/stdout instead of /dev/tty this problem is not observed.)
++	var err error
++	if tty.f, err = os.OpenFile(tty.dev, os.O_RDWR, 0); err != nil {
++		return err
++	}
++
++	if !term.IsTerminal(tty.fd) {
++		return errors.New("device is not a terminal")
++	}
++
++	_ = tty.f.SetReadDeadline(time.Time{})
++	saved, err := term.MakeRaw(tty.fd) // also sets vMin and vTime
++	if err != nil {
++		return err
++	}
++	tty.saved = saved
++
++	tty.stopQ = make(chan struct{})
++	tty.wg.Add(1)
++	go func(stopQ chan struct{}) {
++		defer tty.wg.Done()
++		for {
++			select {
++			case <-tty.sig:
++				tty.l.Lock()
++				cb := tty.cb
++				tty.l.Unlock()
++				if cb != nil {
++					cb()
++				}
++			case <-stopQ:
++				return
++			}
++		}
++	}(tty.stopQ)
++
++	signal.Notify(tty.sig, syscall.SIGWINCH)
++	return nil
++}
++
++func (tty *devTty) Drain() error {
++	_ = tty.f.SetReadDeadline(time.Now())
++	if err := tcSetBufParams(tty.fd, 0, 0); err != nil {
++		return err
++	}
++	return nil
++}
++
++func (tty *devTty) Stop() error {
++	tty.l.Lock()
++	if err := term.Restore(tty.fd, tty.saved); err != nil {
++		tty.l.Unlock()
++		return err
++	}
++	_ = tty.f.SetReadDeadline(time.Now())
++
++	signal.Stop(tty.sig)
++	close(tty.stopQ)
++	tty.l.Unlock()
++
++	tty.wg.Wait()
++
++	// close our tty device -- we'll get another one if we Start again later.
++	_ = tty.f.Close()
++
++	return nil
++}
++
++func (tty *devTty) WindowSize() (WindowSize, error) {
++	size := WindowSize{}
++	ws, err := unix.IoctlGetWinsize(tty.fd, unix.TIOCGWINSZ)
++	if err != nil {
++		return size, err
++	}
++	w := int(ws.Col)
++	h := int(ws.Row)
++	if w == 0 {
++		w, _ = strconv.Atoi(os.Getenv("COLUMNS"))
++	}
++	if w == 0 {
++		w = 80 // default
++	}
++	if h == 0 {
++		h, _ = strconv.Atoi(os.Getenv("LINES"))
++	}
++	if h == 0 {
++		h = 25 // default
++	}
++	size.Width = w
++	size.Height = h
++	size.PixelWidth = int(ws.Xpixel)
++	size.PixelHeight = int(ws.Ypixel)
++	return size, nil
++}
++
++func (tty *devTty) NotifyResize(cb func()) {
++	tty.l.Lock()
++	tty.cb = cb
++	tty.l.Unlock()
++}
++
++// NewDevTty opens a /dev/tty based Tty.
++func NewDevTty() (Tty, error) {
++	return NewDevTtyFromDev("/dev/tty")
++}
++
++// NewDevTtyFromDev opens a tty device given a path.  This can be useful to bind to other nodes.
++func NewDevTtyFromDev(dev string) (Tty, error) {
++	tty := &devTty{
++		dev: dev,
++		sig: make(chan os.Signal),
++	}
++	var err error
++	if tty.of, err = os.OpenFile(dev, os.O_RDWR, 0); err != nil {
++		return nil, err
++	}
++	tty.fd = int(tty.of.Fd())
++	if !term.IsTerminal(tty.fd) {
++		_ = tty.f.Close()
++		return nil, errors.New("not a terminal")
++	}
++	if tty.saved, err = term.GetState(tty.fd); err != nil {
++		_ = tty.f.Close()
++		return nil, fmt.Errorf("failed to get state: %w", err)
++	}
++	return tty, nil
++}
+diff --git c/tty_win.go w/tty_win.go
+new file mode 100644
+index 0000000..1351ed1
+--- /dev/null
++++ w/tty_win.go
+@@ -0,0 +1,278 @@
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build windows
++// +build windows
++
++package tcell
++
++import (
++	"encoding/binary"
++	"errors"
++	"sync"
++	"syscall"
++	"time"
++	"unicode/utf16"
++	"unsafe"
++)
++
++var (
++	k32 = syscall.NewLazyDLL("kernel32.dll")
++)
++
++var (
++	procReadConsoleInput              = k32.NewProc("ReadConsoleInputW")
++	procGetNumberOfConsoleInputEvents = k32.NewProc("GetNumberOfConsoleInputEvents")
++	procFlushConsoleInputBuffer       = k32.NewProc("FlushConsoleInputBuffer")
++	procWaitForMultipleObjects        = k32.NewProc("WaitForMultipleObjects")
++	procSetConsoleMode                = k32.NewProc("SetConsoleMode")
++	procGetConsoleMode                = k32.NewProc("GetConsoleMode")
++	procGetConsoleScreenBufferInfo    = k32.NewProc("GetConsoleScreenBufferInfo")
++	procCreateEvent                   = k32.NewProc("CreateEventW")
++	procSetEvent                      = k32.NewProc("SetEvent")
++)
++
++const (
++	keyEvent    uint16 = 1
++	mouseEvent  uint16 = 2
++	resizeEvent uint16 = 4
++	menuEvent   uint16 = 8 // don't use
++	focusEvent  uint16 = 16
++)
++
++type inputRecord struct {
++	typ  uint16
++	_    uint16
++	data [16]byte
++}
++
++type winTty struct {
++	buf        chan byte
++	out        syscall.Handle
++	in         syscall.Handle
++	cancelFlag syscall.Handle
++	running    bool
++	stopQ      chan struct{}
++	resizeCb   func()
++	cols       uint16
++	rows       uint16
++	pair       []uint16 // for surrogate pairs (UTF-16)
++	oimode     uint32   // original input mode
++	oomode     uint32   // original output mode
++	oscreen    consoleInfo
++	wg         sync.WaitGroup
++	sync.Mutex
++}
++
++func (w *winTty) Read(b []byte) (int, error) {
++	// first character read blocks
++	var num int
++	select {
++	case c := <-w.buf:
++		b[0] = c
++		num++
++	case <-w.stopQ:
++		// stopping, so make sure we eat everything, which might require
++		// very short sleeps to ensure all buffered data is consumed.
++		break
++	}
++
++	// second character read is non-blocking
++	for ; num < len(b); num++ {
++		select {
++		case c := <-w.buf:
++			b[num] = c
++		case <-time.After(time.Millisecond * 10):
++			return num, nil
++		}
++	}
++	return num, nil
++}
++
++func (w *winTty) Write(b []byte) (int, error) {
++	esc := utf16.Encode([]rune(string(b)))
++	if len(esc) > 0 {
++		err := syscall.WriteConsole(w.out, &esc[0], uint32(len(esc)), nil, nil)
++		if err != nil {
++			return 0, err
++		}
++	}
++	return len(b), nil
++}
++
++func (w *winTty) Close() error {
++	_ = syscall.Close(w.in)
++	_ = syscall.Close(w.out)
++	return nil
++}
++
++func (w *winTty) Drain() error {
++	close(w.stopQ)
++	time.Sleep(time.Millisecond * 10)
++	_, _, _ = procSetEvent.Call(uintptr(w.cancelFlag))
++	return nil
++}
++
++func (w *winTty) getConsoleInput() error {
++	// cancelFlag comes first as WaitForMultipleObjects returns the lowest index
++	// in the event that both events are signalled.
++	waitObjects := []syscall.Handle{w.cancelFlag, w.in}
++
++	// As arrays are contiguous in memory, a pointer to the first object is the
++	// same as a pointer to the array itself.
++	pWaitObjects := unsafe.Pointer(&waitObjects[0])
++
++	rv, _, er := procWaitForMultipleObjects.Call(
++		uintptr(len(waitObjects)),
++		uintptr(pWaitObjects),
++		uintptr(0),
++		w32Infinite)
++
++	// WaitForMultipleObjects returns WAIT_OBJECT_0 + the index.
++	switch rv {
++	case w32WaitObject0: // w.cancelFlag
++		return errors.New("cancelled")
++	case w32WaitObject0 + 1: // w.in
++		// rec := &inputRecord{}
++		var nrec int32
++		rv, _, er := procGetNumberOfConsoleInputEvents.Call(
++			uintptr(w.in),
++			uintptr(unsafe.Pointer(&nrec)))
++		rec := make([]inputRecord, nrec)
++		rv, _, er = procReadConsoleInput.Call(
++			uintptr(w.in),
++			uintptr(unsafe.Pointer(&rec[0])),
++			uintptr(nrec),
++			uintptr(unsafe.Pointer(&nrec)))
++		if rv == 0 {
++			return er
++		}
++		for i := range nrec {
++			ir := rec[i]
++			switch ir.typ {
++			case keyEvent:
++				chr := ir.data[10] // we only see ASCII, key down events in VT mode
++
++				// because we use win32-input-mode, we will only
++				// see US-ASCII characters - (Q: will they be
++				// 16-bit values with possible surrogate pairs?)
++				select {
++				case w.buf <- chr:
++				case <-w.stopQ:
++					break
++				}
++
++			case resizeEvent:
++				w.Lock()
++				w.cols = binary.LittleEndian.Uint16(ir.data[0:]) + 1
++				w.rows = binary.LittleEndian.Uint16(ir.data[2:]) + 1
++				cb := w.resizeCb
++				w.Unlock()
++				if cb != nil {
++					cb()
++				}
++
++			default:
++			}
++		}
++		return nil
++	default:
++		return er
++	}
++}
++
++func (w *winTty) scanInput() {
++	defer w.wg.Done()
++	for {
++		if e := w.getConsoleInput(); e != nil {
++			return
++		}
++	}
++}
++
++func (w *winTty) Start() error {
++
++	w.Lock()
++	defer w.Unlock()
++
++	if w.running {
++		return errors.New("already engaged")
++	}
++	_, _, _ = procFlushConsoleInputBuffer.Call(uintptr(w.in))
++	w.stopQ = make(chan struct{})
++	cf, _, err := procCreateEvent.Call(
++		uintptr(0),
++		uintptr(1),
++		uintptr(0),
++		uintptr(0))
++	if cf == uintptr(0) {
++		return err
++	}
++	w.running = true
++	w.cancelFlag = syscall.Handle(cf)
++
++	_, _, _ = procSetConsoleMode.Call(uintptr(w.in),
++		uintptr(modeVtInput|modeResizeEn|modeExtendFlg))
++	_, _, _ = procSetConsoleMode.Call(uintptr(w.out),
++		uintptr(modeVtOutput|modeNoAutoNL|modeCookedOut|modeUnderline))
++
++	w.wg.Add(1)
++	go w.scanInput()
++	return nil
++}
++
++func (w *winTty) Stop() error {
++	w.wg.Wait()
++	w.Lock()
++	defer w.Unlock()
++	_, _, _ = procSetConsoleMode.Call(uintptr(w.in), uintptr(w.oimode))
++	_, _, _ = procSetConsoleMode.Call(uintptr(w.out), uintptr(w.oomode))
++	_, _, _ = procFlushConsoleInputBuffer.Call(uintptr(w.in))
++	w.running = false
++
++	return nil
++}
++
++func (w *winTty) NotifyResize(cb func()) {
++	w.resizeCb = cb
++}
++
++func (w *winTty) WindowSize() (WindowSize, error) {
++	w.Lock()
++	defer w.Unlock()
++	return WindowSize{Width: int(w.cols), Height: int(w.rows)}, nil
++}
++
++func NewDevTty() (Tty, error) {
++	w := &winTty{}
++	var err error
++	w.in, err = syscall.Open("CONIN$", syscall.O_RDWR, 0)
++	if err != nil {
++		return nil, err
++	}
++	w.out, err = syscall.Open("CONOUT$", syscall.O_RDWR, 0)
++	if err != nil {
++		_ = syscall.Close(w.in)
++		return nil, err
++	}
++	w.buf = make(chan byte, 128)
++
++	_, _, _ = procGetConsoleScreenBufferInfo.Call(uintptr(w.out), uintptr(unsafe.Pointer(&w.oscreen)))
++	_, _, _ = procGetConsoleMode.Call(uintptr(w.out), uintptr(unsafe.Pointer(&w.oomode)))
++	_, _, _ = procGetConsoleMode.Call(uintptr(w.in), uintptr(unsafe.Pointer(&w.oimode)))
++	w.rows = uint16(w.oscreen.size.y + 1)
++	w.cols = uint16(w.oscreen.size.x + 1)
++
++	return w, nil
++}
+diff --git c/wscreen.go w/wscreen.go
+new file mode 100644
+index 0000000..4c866d1
+--- /dev/null
++++ w/wscreen.go
+@@ -0,0 +1,629 @@
++// Copyright 2025 The TCell Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use file except in compliance with the License.
++// You may obtain a copy of the license at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build js && wasm
++// +build js,wasm
++
++package tcell
++
++import (
++	"errors"
++	"fmt"
++	"sync"
++	"syscall/js"
++	"unicode/utf8"
++
++	"github.com/gdamore/tcell/v2/terminfo"
++)
++
++func NewTerminfoScreen() (Screen, error) {
++	t := &wScreen{}
++	t.fallback = make(map[rune]string)
++
++	return &baseScreen{screenImpl: t}, nil
++}
++
++type wScreen struct {
++	w, h  int
++	style Style
++	cells CellBuffer
++
++	running      bool
++	clear        bool
++	flagsPresent bool
++	pasteEnabled bool
++	mouseFlags   MouseFlags
++
++	cursorStyle CursorStyle
++
++	quit     chan struct{}
++	evch     chan Event
++	fallback map[rune]string
++	finiOnce sync.Once
++
++	sync.Mutex
++}
++
++func (t *wScreen) Init() error {
++	t.w, t.h = 80, 24 // default for html as of now
++	t.evch = make(chan Event, 10)
++	t.quit = make(chan struct{})
++
++	t.Lock()
++	t.running = true
++	t.style = StyleDefault
++	t.cells.Resize(t.w, t.h)
++	t.Unlock()
++
++	js.Global().Set("onKeyEvent", js.FuncOf(t.onKeyEvent))
++	js.Global().Set("onMouseClick", js.FuncOf(t.unset))
++	js.Global().Set("onMouseMove", js.FuncOf(t.unset))
++	js.Global().Set("onFocus", js.FuncOf(t.unset))
++
++	return nil
++}
++
++func (t *wScreen) Fini() {
++	t.finiOnce.Do(func() {
++		close(t.quit)
++	})
++}
++
++func (t *wScreen) SetStyle(style Style) {
++	t.Lock()
++	t.style = style
++	t.Unlock()
++}
++
++// paletteColor gives a more natural palette color actually matching
++// typical XTerm.  We might in the future want to permit styling these
++// via CSS.
++
++var palette = map[Color]int32{
++	ColorBlack:   0x000000,
++	ColorMaroon:  0xcd0000,
++	ColorGreen:   0x00cd00,
++	ColorOlive:   0xcdcd00,
++	ColorNavy:    0x0000ee,
++	ColorPurple:  0xcd00cd,
++	ColorTeal:    0x00cdcd,
++	ColorSilver:  0xe5e5e5,
++	ColorGray:    0x7f7f7f,
++	ColorRed:     0xff0000,
++	ColorLime:    0x00ff00,
++	ColorYellow:  0xffff00,
++	ColorBlue:    0x5c5cff,
++	ColorFuchsia: 0xff00ff,
++	ColorAqua:    0x00ffff,
++	ColorWhite:   0xffffff,
++}
++
++func paletteColor(c Color) int32 {
++	if c.IsRGB() {
++		return int32(c & 0xffffff)
++	}
++	if c >= ColorBlack && c <= ColorWhite {
++		return palette[c]
++	}
++	return c.Hex()
++}
++
++func (t *wScreen) drawCell(x, y int) int {
++	str, style, width := t.cells.Get(x, y)
++
++	if !t.cells.Dirty(x, y) {
++		return width
++	}
++
++	if style == StyleDefault {
++		style = t.style
++	}
++
++	fg, bg := paletteColor(style.fg), paletteColor(style.bg)
++	if fg == -1 {
++		fg = 0xe5e5e5
++	}
++	if bg == -1 {
++		bg = 0x000000
++	}
++	us, uc := style.ulStyle, paletteColor(style.ulColor)
++	if uc == -1 {
++		uc = 0x000000
++	}
++
++	t.cells.SetDirty(x, y, false)
++	js.Global().Call("drawCell", x, y, str, fg, bg, int(style.attrs), int(us), int(uc))
++
++	return width
++}
++
++func (t *wScreen) ShowCursor(x, y int) {
++	t.Lock()
++	js.Global().Call("showCursor", x, y)
++	t.Unlock()
++}
++
++func (t *wScreen) SetCursor(cs CursorStyle, cc Color) {
++	if !cc.Valid() {
++		cc = ColorLightGray
++	}
++	t.Lock()
++	js.Global().Call("setCursorStyle", curStyleClasses[cs], fmt.Sprintf("#%06x", cc.Hex()))
++	t.Unlock()
++}
++
++func (t *wScreen) HideCursor() {
++	t.ShowCursor(-1, -1)
++}
++
++func (t *wScreen) Show() {
++	t.Lock()
++	t.resize()
++	t.draw()
++	t.Unlock()
++}
++
++func (t *wScreen) clearScreen() {
++	js.Global().Call("clearScreen", t.style.fg.Hex(), t.style.bg.Hex())
++	t.clear = false
++}
++
++func (t *wScreen) draw() {
++	if t.clear {
++		t.clearScreen()
++	}
++
++	for y := 0; y < t.h; y++ {
++		for x := 0; x < t.w; x++ {
++			width := t.drawCell(x, y)
++			x += width - 1
++		}
++	}
++
++	js.Global().Call("show")
++}
++
++func (t *wScreen) EnableMouse(flags ...MouseFlags) {
++	var f MouseFlags
++	flagsPresent := false
++	for _, flag := range flags {
++		f |= flag
++		flagsPresent = true
++	}
++	if !flagsPresent {
++		f = MouseMotionEvents | MouseDragEvents | MouseButtonEvents
++	}
++
++	t.Lock()
++	t.mouseFlags = f
++	t.enableMouse(f)
++	t.Unlock()
++}
++
++func (t *wScreen) enableMouse(f MouseFlags) {
++	if f&MouseButtonEvents != 0 {
++		js.Global().Set("onMouseClick", js.FuncOf(t.onMouseEvent))
++	} else {
++		js.Global().Set("onMouseClick", js.FuncOf(t.unset))
++	}
++
++	if f&MouseDragEvents != 0 || f&MouseMotionEvents != 0 {
++		js.Global().Set("onMouseMove", js.FuncOf(t.onMouseEvent))
++	} else {
++		js.Global().Set("onMouseMove", js.FuncOf(t.unset))
++	}
++}
++
++func (t *wScreen) DisableMouse() {
++	t.Lock()
++	t.mouseFlags = 0
++	t.enableMouse(0)
++	t.Unlock()
++}
++
++func (t *wScreen) EnablePaste() {
++	t.Lock()
++	t.pasteEnabled = true
++	t.enablePasting(true)
++	t.Unlock()
++}
++
++func (t *wScreen) DisablePaste() {
++	t.Lock()
++	t.pasteEnabled = false
++	t.enablePasting(false)
++	t.Unlock()
++}
++
++func (t *wScreen) enablePasting(on bool) {
++	if on {
++		js.Global().Set("onPaste", js.FuncOf(t.onPaste))
++	} else {
++		js.Global().Set("onPaste", js.FuncOf(t.unset))
++	}
++}
++
++func (t *wScreen) EnableFocus() {
++	t.Lock()
++	js.Global().Set("onFocus", js.FuncOf(t.onFocus))
++	t.Unlock()
++}
++
++func (t *wScreen) DisableFocus() {
++	t.Lock()
++	js.Global().Set("onFocus", js.FuncOf(t.unset))
++	t.Unlock()
++}
++
++func (s *wScreen) GetClipboard() {
++}
++
++func (s *wScreen) SetClipboard(_ []byte) {
++}
++
++func (t *wScreen) Size() (int, int) {
++	t.Lock()
++	w, h := t.w, t.h
++	t.Unlock()
++	return w, h
++}
++
++// resize does nothing, as asking the web window to resize
++// without a specified width or height will cause no change.
++func (t *wScreen) resize() {}
++
++func (t *wScreen) Colors() int {
++	return 16777216 // 256 ^ 3
++}
++
++func (t *wScreen) clip(x, y int) (int, int) {
++	w, h := t.cells.Size()
++	if x < 0 {
++		x = 0
++	}
++	if y < 0 {
++		y = 0
++	}
++	if x > w-1 {
++		x = w - 1
++	}
++	if y > h-1 {
++		y = h - 1
++	}
++	return x, y
++}
++
++func (t *wScreen) postEvent(ev Event) {
++	select {
++	case t.evch <- ev:
++	case <-t.quit:
++	}
++}
++
++func (t *wScreen) onMouseEvent(this js.Value, args []js.Value) interface{} {
++	mod := ModNone
++	button := ButtonNone
++
++	switch args[2].Int() {
++	case 0:
++		if t.mouseFlags&MouseMotionEvents == 0 {
++			// don't want this event! is a mouse motion event, but user has asked not.
++			return nil
++		}
++		button = ButtonNone
++	case 1:
++		button = Button1
++	case 2:
++		button = Button3 // Note we prefer to treat right as button 2
++	case 3:
++		button = Button2 // And the middle button as button 3
++	}
++
++	if args[3].Bool() { // mod shift
++		mod |= ModShift
++	}
++
++	if args[4].Bool() { // mod alt
++		mod |= ModAlt
++	}
++
++	if args[5].Bool() { // mod ctrl
++		mod |= ModCtrl
++	}
++
++	t.postEvent(NewEventMouse(args[0].Int(), args[1].Int(), button, mod))
++	return nil
++}
++
++func (t *wScreen) onKeyEvent(this js.Value, args []js.Value) interface{} {
++	key := args[0].String()
++
++	// don't accept any modifier keys as their own
++	if key == "Control" || key == "Alt" || key == "Meta" || key == "Shift" {
++		return nil
++	}
++
++	mod := ModNone
++	if args[1].Bool() { // mod shift
++		mod |= ModShift
++	}
++
++	if args[2].Bool() { // mod alt
++		mod |= ModAlt
++	}
++
++	if args[3].Bool() { // mod ctrl
++		mod |= ModCtrl
++	}
++
++	if args[4].Bool() { // mod meta
++		mod |= ModMeta
++	}
++
++	// next try function keys
++	if k, ok := WebKeyNames[key]; ok {
++		t.postEvent(NewEventKey(k, 0, mod))
++		return nil
++	}
++
++	// finally try normal, printable chars
++	r, _ := utf8.DecodeRuneInString(key)
++	t.postEvent(NewEventKey(KeyRune, r, mod))
++	return nil
++}
++
++func (t *wScreen) onPaste(this js.Value, args []js.Value) interface{} {
++	t.postEvent(NewEventPaste(args[0].Bool()))
++	return nil
++}
++
++func (t *wScreen) onFocus(this js.Value, args []js.Value) interface{} {
++	t.postEvent(NewEventFocus(args[0].Bool()))
++	return nil
++}
++
++// unset is a dummy function for js when we want nothing to
++// happen when javascript calls a function (for example, when
++// mouse input is disabled, when onMouseEvent() is called from
++// js, it redirects here and does nothing).
++func (t *wScreen) unset(this js.Value, args []js.Value) interface{} {
++	return nil
++}
++
++func (t *wScreen) Sync() {
++	t.Lock()
++	t.resize()
++	t.clear = true
++	t.cells.Invalidate()
++	t.draw()
++	t.Unlock()
++}
++
++func (t *wScreen) CharacterSet() string {
++	return "UTF-8"
++}
++
++func (t *wScreen) RegisterRuneFallback(orig rune, fallback string) {
++	t.Lock()
++	t.fallback[orig] = fallback
++	t.Unlock()
++}
++
++func (t *wScreen) UnregisterRuneFallback(orig rune) {
++	t.Lock()
++	delete(t.fallback, orig)
++	t.Unlock()
++}
++
++func (t *wScreen) CanDisplay(r rune, checkFallbacks bool) bool {
++	if utf8.ValidRune(r) {
++		return true
++	}
++	if !checkFallbacks {
++		return false
++	}
++	if _, ok := t.fallback[r]; ok {
++		return true
++	}
++	return false
++}
++
++func (t *wScreen) HasMouse() bool {
++	return true
++}
++
++func (t *wScreen) HasKey(k Key) bool {
++	return true
++}
++
++func (t *wScreen) SetSize(w, h int) {
++	if w == t.w && h == t.h {
++		return
++	}
++
++	t.cells.Invalidate()
++	t.cells.Resize(w, h)
++	js.Global().Call("resize", w, h)
++	t.w, t.h = w, h
++	t.postEvent(NewEventResize(w, h))
++}
++
++func (t *wScreen) Resize(int, int, int, int) {}
++
++// Suspend simply pauses all input and output, and clears the screen.
++// There isn't a "default terminal" to go back to.
++func (t *wScreen) Suspend() error {
++	t.Lock()
++	if !t.running {
++		t.Unlock()
++		return nil
++	}
++	t.running = false
++	t.clearScreen()
++	t.enableMouse(0)
++	t.enablePasting(false)
++	js.Global().Set("onKeyEvent", js.FuncOf(t.unset)) // stop keypresses
++	return nil
++}
++
++func (t *wScreen) Resume() error {
++	t.Lock()
++
++	if t.running {
++		return errors.New("already engaged")
++	}
++	t.running = true
++
++	t.enableMouse(t.mouseFlags)
++	t.enablePasting(t.pasteEnabled)
++
++	js.Global().Set("onKeyEvent", js.FuncOf(t.onKeyEvent))
++
++	t.Unlock()
++	return nil
++}
++
++func (t *wScreen) Beep() error {
++	js.Global().Call("beep")
++	return nil
++}
++
++func (t *wScreen) Tty() (Tty, bool) {
++	return nil, false
++}
++
++func (t *wScreen) GetCells() *CellBuffer {
++	return &t.cells
++}
++
++func (t *wScreen) EventQ() chan Event {
++	return t.evch
++}
++
++func (t *wScreen) StopQ() <-chan struct{} {
++	return t.quit
++}
++
++func (t *wScreen) SetTitle(title string) {
++	js.Global().Call("setTitle", title)
++}
++
++// WebKeyNames maps string names reported from HTML
++// (KeyboardEvent.key) to tcell accepted keys.
++var WebKeyNames = map[string]Key{
++	"Enter":      KeyEnter,
++	"Backspace":  KeyBackspace,
++	"Tab":        KeyTab,
++	"Backtab":    KeyBacktab,
++	"Escape":     KeyEsc,
++	"Backspace2": KeyBackspace2,
++	"Delete":     KeyDelete,
++	"Insert":     KeyInsert,
++	"ArrowUp":    KeyUp,
++	"ArrowDown":  KeyDown,
++	"ArrowLeft":  KeyLeft,
++	"ArrowRight": KeyRight,
++	"Home":       KeyHome,
++	"End":        KeyEnd,
++	"UpLeft":     KeyUpLeft,    // not supported by HTML
++	"UpRight":    KeyUpRight,   // not supported by HTML
++	"DownLeft":   KeyDownLeft,  // not supported by HTML
++	"DownRight":  KeyDownRight, // not supported by HTML
++	"Center":     KeyCenter,
++	"PgDn":       KeyPgDn,
++	"PgUp":       KeyPgUp,
++	"Clear":      KeyClear,
++	"Exit":       KeyExit,
++	"Cancel":     KeyCancel,
++	"Pause":      KeyPause,
++	"Print":      KeyPrint,
++	"F1":         KeyF1,
++	"F2":         KeyF2,
++	"F3":         KeyF3,
++	"F4":         KeyF4,
++	"F5":         KeyF5,
++	"F6":         KeyF6,
++	"F7":         KeyF7,
++	"F8":         KeyF8,
++	"F9":         KeyF9,
++	"F10":        KeyF10,
++	"F11":        KeyF11,
++	"F12":        KeyF12,
++	"F13":        KeyF13,
++	"F14":        KeyF14,
++	"F15":        KeyF15,
++	"F16":        KeyF16,
++	"F17":        KeyF17,
++	"F18":        KeyF18,
++	"F19":        KeyF19,
++	"F20":        KeyF20,
++	"F21":        KeyF21,
++	"F22":        KeyF22,
++	"F23":        KeyF23,
++	"F24":        KeyF24,
++	"F25":        KeyF25,
++	"F26":        KeyF26,
++	"F27":        KeyF27,
++	"F28":        KeyF28,
++	"F29":        KeyF29,
++	"F30":        KeyF30,
++	"F31":        KeyF31,
++	"F32":        KeyF32,
++	"F33":        KeyF33,
++	"F34":        KeyF34,
++	"F35":        KeyF35,
++	"F36":        KeyF36,
++	"F37":        KeyF37,
++	"F38":        KeyF38,
++	"F39":        KeyF39,
++	"F40":        KeyF40,
++	"F41":        KeyF41,
++	"F42":        KeyF42,
++	"F43":        KeyF43,
++	"F44":        KeyF44,
++	"F45":        KeyF45,
++	"F46":        KeyF46,
++	"F47":        KeyF47,
++	"F48":        KeyF48,
++	"F49":        KeyF49,
++	"F50":        KeyF50,
++	"F51":        KeyF51,
++	"F52":        KeyF52,
++	"F53":        KeyF53,
++	"F54":        KeyF54,
++	"F55":        KeyF55,
++	"F56":        KeyF56,
++	"F57":        KeyF57,
++	"F58":        KeyF58,
++	"F59":        KeyF59,
++	"F60":        KeyF60,
++	"F61":        KeyF61,
++	"F62":        KeyF62,
++	"F63":        KeyF63,
++	"F64":        KeyF64,
++}
++
++var curStyleClasses = map[CursorStyle]string{
++	CursorStyleDefault:           "cursor-blinking-block",
++	CursorStyleBlinkingBlock:     "cursor-blinking-block",
++	CursorStyleSteadyBlock:       "cursor-steady-block",
++	CursorStyleBlinkingUnderline: "cursor-blinking-underline",
++	CursorStyleSteadyUnderline:   "cursor-steady-underline",
++	CursorStyleBlinkingBar:       "cursor-blinking-bar",
++	CursorStyleSteadyBar:         "cursor-steady-bar",
++}
++
++func LookupTerminfo(name string) (ti *terminfo.Terminfo, e error) {
++	return nil, errors.New("LookupTermInfo not supported")
++}
