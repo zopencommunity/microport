@@ -1,5 +1,5 @@
 # bump: micro-version /MICRO_VERSION="(.*)"/ https://github.com/zyedidia/micro.git|semver:*
-MICRO_VERSION="2.0.14"
+MICRO_VERSION="2.0.15"
 
 ###
 ### Build control file for the micro port
